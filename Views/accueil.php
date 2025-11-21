@@ -127,26 +127,26 @@ $page_title = "لوحة التحكم - نظام إدارة المشاريع";
                 <div class="feature-card">
                     <div class="feature-number">01</div>
                     <div class="feature-icon">📋</div>
-                    <h3 class="feature-title">المتعهدات</h3>
-                    <p class="feature-desc">قائمة المتعهدات المعروضة على اللجنة</p>
+                    <h3 class="feature-title">المقترحات</h3>
+                    <p class="feature-desc"> المقترحات المعروضة على اللجنة</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-number">02</div>
                     <div class="feature-icon">🏢</div>
                     <h3 class="feature-title">الجلسات</h3>
-                    <p class="feature-desc">قائمة الجلسات المعروضة على اللجنة</p>
+                    <p class="feature-desc"> الجلسات المعروضة على اللجنة</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-number">03</div>
                     <div class="feature-icon">🛒</div>
                     <h3 class="feature-title">الصفقات</h3>
-                    <p class="feature-desc">قائمة الصفقات التي تم ابرامها</p>
+                    <p class="feature-desc"> الصفقات التي تم ابرامها</p>
                 </div>
                 <div class="feature-card">
                     <div class="feature-number">04</div>
                     <div class="feature-icon">🚚</div>
                     <h3 class="feature-title">المتابعة</h3>
-                    <p class="feature-desc">متابعة التعاريج</p>
+                    <p class="feature-desc">متابعة المقترحات</p>
                 </div>
             </div>
         </div>
