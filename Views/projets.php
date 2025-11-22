@@ -1,6 +1,7 @@
 <?php
 require_once '../Config/Database.php';
 require_once '../Config/Security.php';
+require_once '../Config/Permissions.php';
 
 Security::startSecureSession();
 Security::requireLogin();
@@ -12,6 +13,12 @@ $_SESSION['last_activity'] = time();
 
 $database = new Database();
 $db = $database->getConnection();
+
+// Vérifier la permission de création
+if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
+    echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لإضافة مقترحات']);
+    exit();
+}
 
 // Traitement AJAX pour l'ajout
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_projet') {
@@ -29,10 +36,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $procedurePro = Security::sanitizeInput($_POST['procedurePro']);
     $cout = Security::sanitizeInput($_POST['cout']);
     $proposition = Security::sanitizeInput($_POST['proposition']);
+    $idRapporteur = Security::sanitizeInput($_POST['idRapporteur']);
+    
+    // Si pas d'établissement sélectionné, mettre NULL
+    if (empty($idEtab)) {
+        $idEtab = null;
+    }
     
     try {
+        $db->beginTransaction();
+        
+        // Insertion du projet
         $sql = "INSERT INTO projet (idMinistere, idEtab, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
-                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idUser, 1, NOW())";
+                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 1, NOW())";
         
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':idMinistere', $idMinistere);
@@ -42,25 +58,59 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $stmt->bindParam(':procedurePro', $procedurePro);
         $stmt->bindParam(':cout', $cout);
         $stmt->bindParam(':proposition', $proposition);
-        $stmt->bindParam(':idUser', $_SESSION['user_id']);
+        $stmt->bindParam(':idRapporteur', $idRapporteur);
         
         if ($stmt->execute()) {
             $projetId = $db->lastInsertId();
+            
+            // Gestion du fichier
+            if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
+                $uploadDir = '../uploads/documents/';
+                
+                // Créer le dossier s'il n'existe pas
+                if (!file_exists($uploadDir)) {
+                    mkdir($uploadDir, 0777, true);
+                }
+                
+                $fileName = $_FILES['fichier']['name'];
+                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+                
+                if (in_array($fileExtension, $allowedExtensions)) {
+                    $newFileName = 'doc_' . $projetId . '_' . time() . '.' . $fileExtension;
+                    $filePath = $uploadDir . $newFileName;
+                    
+                    if (move_uploaded_file($_FILES['fichier']['tmp_name'], $filePath)) {
+                        // Insertion du document dans la table
+                        $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                                   VALUES (:idPro, :libDoc, :cheminAcces, 1, :idExterne)";
+                        $stmtDoc = $db->prepare($sqlDoc);
+                        $stmtDoc->bindParam(':idPro', $projetId);
+                        $stmtDoc->bindParam(':libDoc', $fileName);
+                        $stmtDoc->bindParam(':cheminAcces', $filePath);
+                        $stmtDoc->bindParam(':idExterne', $projetId);
+                        $stmtDoc->execute();
+                    }
+                }
+            }
             
             // Log l'action
             $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
             $logStmt = $db->prepare($logSql);
             $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة مقترح جديد رقم {$projetId}: {$sujet}";
+            $action = "إضافة مقترح جديد رقم {$projetId}: " . substr($sujet, 0, 50);
             $logStmt->bindParam(':action', $action);
             $logStmt->execute();
             
+            $db->commit();
             echo json_encode(['success' => true, 'message' => 'تم إضافة المقترح بنجاح']);
         } else {
+            $db->rollBack();
             echo json_encode(['success' => false, 'message' => 'فشل في إضافة المقترح']);
         }
     } catch (PDOException $e) {
-        echo json_encode(['success' => false, 'message' => 'حدث خطأ: ' . $e->getMessage()]);
+        $db->rollBack();
+        echo json_encode(['success' => false, 'message' => 'حدث خطأ في قاعدة البيانات']);
     }
     exit();
 }
@@ -84,6 +134,9 @@ $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
         LEFT JOIN user u ON p.idUser = u.idUser
         WHERE 1=1";
 
+// Filtre selon le rôle
+$sql .= Permissions::getProjectsWhereClause();
+
 if (!empty($searchQuery)) {
     $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
 }
@@ -95,7 +148,6 @@ if (!empty($filterMinistere)) {
 }
 
 $sql .= " ORDER BY p.dateCreation DESC";
-
 $stmt = $db->prepare($sql);
 
 if (!empty($searchQuery)) {
@@ -118,10 +170,15 @@ $stmtMin = $db->prepare($sqlMin);
 $stmtMin->execute();
 $ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
 
+// Liste des rapporteurs (Admin et Rapporteur uniquement)
+$sqlRapp = "SELECT idUser, nomUser FROM user WHERE typeCpt IN (2, 3) ORDER BY nomUser";
+$stmtRapp = $db->prepare($sqlRapp);
+$stmtRapp->execute();
+$rapporteurs = $stmtRapp->fetchAll(PDO::FETCH_ASSOC);
+
 $csrf_token = Security::generateCSRFToken();
 $page_title = "قائمة المقترحات - نظام إدارة المشاريع";
 ?>
-
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -136,7 +193,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             gap: 20px;
             margin-bottom: 30px;
         }
-        
         .stat-box {
             background: white;
             padding: 20px;
@@ -144,18 +200,15 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             box-shadow: 0 3px 10px rgba(0,0,0,0.08);
             text-align: center;
         }
-        
         .stat-box .number {
             font-size: 32px;
             font-weight: bold;
             margin-bottom: 8px;
         }
-        
         .stat-box .label {
             color: #666;
             font-size: 14px;
         }
-        
         .filters-section {
             background: white;
             padding: 25px;
@@ -163,21 +216,18 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             margin-bottom: 30px;
             box-shadow: 0 5px 20px rgba(0,0,0,0.08);
         }
-        
         .filters-grid {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
         }
-        
         .filter-group label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
             color: #333;
         }
-        
         .filter-group input, .filter-group select {
             width: 100%;
             padding: 12px;
@@ -185,13 +235,11 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             border-radius: 8px;
             font-size: 14px;
         }
-        
         .filter-actions {
             display: flex;
             gap: 15px;
             justify-content: flex-end;
         }
-        
         .btn {
             padding: 12px 30px;
             border: none;
@@ -203,22 +251,22 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             text-decoration: none;
             display: inline-block;
         }
-        
         .btn-primary {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
-        
         .btn-secondary {
             background: #f5f7fa;
             color: #333;
         }
-        
         .btn-success {
             background: #4caf50;
             color: white;
         }
-        
+        .btn-success:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+        }
         .projects-table {
             background: white;
             border-radius: 15px;
@@ -226,42 +274,34 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             box-shadow: 0 5px 20px rgba(0,0,0,0.08);
             overflow-x: auto;
         }
-        
         table {
             width: 100%;
             border-collapse: collapse;
         }
-        
         thead {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
-        
         th, td {
             padding: 15px;
             text-align: center;
         }
-        
         td {
             border-bottom: 1px solid #f0f0f0;
         }
-        
         tbody tr:hover {
             background: #f8f9fa;
         }
-        
         .badge {
             padding: 6px 12px;
             border-radius: 20px;
             font-size: 12px;
             font-weight: 600;
         }
-        
         .badge-pending { background: #fff3cd; color: #856404; }
         .badge-processing { background: #d1ecf1; color: #0c5460; }
         .badge-approved { background: #d4edda; color: #155724; }
         .badge-rejected { background: #f8d7da; color: #721c24; }
-        
         .btn-action {
             padding: 6px 12px;
             border-radius: 6px;
@@ -269,30 +309,30 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             text-decoration: none;
             margin: 0 2px;
         }
-        
         .btn-view { background: #17a2b8; color: white; }
         .btn-edit { background: #ffc107; color: #333; }
         .btn-delete { background: #dc3545; color: white; }
-        
-        /* MODAL STYLES */
+
+        /* MODAL */
         .modal {
             display: none;
             position: fixed;
-            z-index: 9999;
+            z-index: 99999;
             left: 0;
             top: 0;
             width: 100%;
             height: 100%;
             overflow: auto;
             background-color: rgba(0, 0, 0, 0.7);
+        }
+        .modal.show {
+            display: block !important;
             animation: fadeIn 0.3s;
         }
-        
         @keyframes fadeIn {
             from { opacity: 0; }
             to { opacity: 1; }
         }
-        
         .modal-content {
             background-color: white;
             margin: 2% auto;
@@ -304,7 +344,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             max-height: 95vh;
             overflow-y: auto;
         }
-        
         @keyframes slideDown {
             from {
                 transform: translateY(-100px);
@@ -315,7 +354,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                 opacity: 1;
             }
         }
-        
         .modal-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
@@ -325,12 +363,10 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             justify-content: space-between;
             align-items: center;
         }
-        
         .modal-header h2 {
             margin: 0;
             font-size: 24px;
         }
-        
         .close {
             color: white;
             font-size: 35px;
@@ -339,37 +375,30 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             line-height: 1;
             transition: transform 0.3s;
         }
-        
         .close:hover {
             transform: scale(1.2);
         }
-        
         .modal-body {
             padding: 30px;
         }
-        
         .form-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 20px;
             margin-bottom: 20px;
         }
-        
         .form-group-full {
             grid-column: 1 / -1;
         }
-        
         .form-group label {
             display: block;
             margin-bottom: 8px;
             font-weight: 600;
             color: #333;
         }
-        
         .form-group label .required {
             color: #dc3545;
         }
-        
         .form-control {
             width: 100%;
             padding: 12px;
@@ -379,18 +408,15 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             transition: border-color 0.3s;
             font-family: inherit;
         }
-        
         .form-control:focus {
             outline: none;
             border-color: #667eea;
             box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
         }
-        
         textarea.form-control {
             resize: vertical;
             min-height: 100px;
         }
-        
         .modal-footer {
             padding: 20px 30px;
             border-top: 1px solid #e0e0e0;
@@ -398,7 +424,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             gap: 15px;
             justify-content: center;
         }
-        
         .info-box {
             background: #e7f3ff;
             border-right: 4px solid #2196F3;
@@ -408,34 +433,29 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             font-size: 14px;
             color: #1565C0;
         }
-        
         .alert {
             padding: 12px 16px;
             border-radius: 8px;
             margin-bottom: 20px;
             font-size: 14px;
         }
-        
         .alert-success {
             background: #d4edda;
             color: #155724;
             border: 1px solid #c3e6cb;
         }
-        
         .alert-error {
             background: #f8d7da;
             color: #721c24;
             border: 1px solid #f5c6cb;
         }
-        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
         @media (max-width: 768px) {
             .form-grid {
                 grid-template-columns: 1fr;
-            }
-            
-            .modal-content {
-                width: 95%;
-                margin: 5% auto;
             }
         }
     </style>
@@ -471,7 +491,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
         <div class="container">
             <h2 class="section-title">قائمة المقترحات</h2>
             
-            <!-- Statistics -->
             <div class="stats-summary">
                 <div class="stat-box">
                     <div class="number" style="color: #667eea;"><?php echo count($projets); ?></div>
@@ -495,7 +514,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                 </div>
             </div>
             
-            <!-- Filters -->
             <div class="filters-section">
                 <form method="GET">
                     <div class="filters-grid">
@@ -529,12 +547,13 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
                         <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
-                        <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة مقترح جديد</button>
+                        <?php if (Permissions::canCreateProjet()): ?>
+                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة مقترح جديد</button>
+                        <?php endif; ?>
                     </div>
                 </form>
             </div>
             
-            <!-- Table -->
             <div class="projects-table">
                 <?php if (count($projets) > 0): ?>
                     <table>
@@ -555,7 +574,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                             <?php foreach ($projets as $projet): ?>
                                 <tr>
                                     <td><?php echo $projet['idPro']; ?></td>
-                                    <td style="text-align: right;"><?php echo htmlspecialchars($projet['sujet']); ?></td>
+                                    <td style="text-align: right;"><?php echo htmlspecialchars(substr($projet['sujet'], 0, 100)); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libMinistere']); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libEtablissement']); ?></td>
                                     <td><?php echo date('Y/m/d', strtotime($projet['dateArrive'])); ?></td>
@@ -571,9 +590,13 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                     <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
                                     <td>
                                         <a href="voir_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-view">عرض</a>
-                                        <a href="modifier_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-edit">تعديل</a>
-                                        <a href="#" class="btn-action btn-delete" 
-                                           onclick="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">حذف</a>
+                                        <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
+                                            <a href="modifier_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-edit">تعديل</a>
+                                        <?php endif; ?>
+                                        <?php if (Permissions::canDeleteProjet($projet['idUser'])): ?>
+                                            <a href="#" class="btn-action btn-delete" 
+                                               onclick="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">حذف</a>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -591,7 +614,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
         <div class="modal-content">
             <div class="modal-header">
                 <h2>➕ إضافة مقترح جديد</h2>
-                <span class="close">&times;</span>
+                <span class="close" id="btnCloseModal">&times;</span>
             </div>
             <div class="modal-body">
                 <div id="modalAlert"></div>
@@ -600,11 +623,19 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                     ℹ️ سيتم تعيين حالة المقترح تلقائياً إلى "الإحالة على اللجنة"
                 </div>
                 
-                <form id="addProjetForm">
+                <form id="addProjetForm" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
                     <input type="hidden" name="action" value="add_projet">
                     
                     <div class="form-grid">
+                        <!-- 1. الموضوع -->
+                        <div class="form-group form-group-full">
+                            <label>الموضوع <span class="required">*</span></label>
+                            <textarea name="sujet" class="form-control" required 
+                                      placeholder="أدخل موضوع المقترح بالتفصيل..."></textarea>
+                        </div>
+                        
+                        <!-- 2. الوزارة -->
                         <div class="form-group">
                             <label>الوزارة <span class="required">*</span></label>
                             <select name="idMinistere" id="modalMinistere" class="form-control" required>
@@ -617,19 +648,22 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                             </select>
                         </div>
                         
+                        <!-- 3. المؤسسة -->
                         <div class="form-group">
                             <label>المؤسسة <span class="required">*</span></label>
-                            <select name="idEtab" id="modalEtab" class="form-control" required disabled>
-                                <option value="">-- اختر الوزارة أولاً --</option>
+                            <select name="idEtab" id="modalEtab" class="form-control" required>
+                                <option value="">-- الوزارة --</option>
                             </select>
                         </div>
                         
+                        <!-- 4. تاريخ الإعلام -->
                         <div class="form-group">
-                            <label>تاريخ الوصول <span class="required">*</span></label>
+                            <label>تاريخ الإعلام <span class="required">*</span></label>
                             <input type="date" name="dateArrive" class="form-control" required 
                                    value="<?php echo date('Y-m-d'); ?>">
                         </div>
                         
+                        <!-- 5. الإجراء -->
                         <div class="form-group">
                             <label>الإجراء <span class="required">*</span></label>
                             <select name="procedurePro" class="form-control" required>
@@ -641,22 +675,42 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                             </select>
                         </div>
                         
+                        <!-- 6. الكلفة -->
                         <div class="form-group form-group-full">
                             <label>الكلفة التقديرية (د.ت) <span class="required">*</span></label>
                             <input type="number" name="cout" class="form-control" required 
                                    step="0.01" min="0" placeholder="0.00">
                         </div>
                         
-                        <div class="form-group form-group-full">
-                            <label>الموضوع <span class="required">*</span></label>
-                            <textarea name="sujet" class="form-control" required 
-                                      placeholder="أدخل موضوع المقترح بالتفصيل..."></textarea>
-                        </div>
-                        
+                        <!-- 7. المقترح -->
                         <div class="form-group form-group-full">
                             <label>المقترح <span class="required">*</span></label>
                             <textarea name="proposition" class="form-control" required 
                                       placeholder="أدخل تفاصيل المقترح والتوصيات..."></textarea>
+                        </div>
+                        
+                        <!-- 8. المقرر -->
+                        <div class="form-group">
+                            <label>المقرر (الإداري/المقرر) <span class="required">*</span></label>
+                            <select name="idRapporteur" class="form-control" required>
+                                <option value="">-- اختر المقرر --</option>
+                                <?php foreach ($rapporteurs as $rapp): ?>
+                                    <option value="<?php echo $rapp['idUser']; ?>"
+                                            <?php echo ($rapp['idUser'] == $_SESSION['user_id']) ? 'selected' : ''; ?>>
+                                        <?php echo htmlspecialchars($rapp['nomUser']); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        
+                        <!-- 9. الملف -->
+                        <div class="form-group">
+                            <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
+                            <input type="file" name="fichier" id="fichier" class="form-control" 
+                                   accept=".pdf,.doc,.docx,.xls,.xlsx" required>
+                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                                الحجم الأقصى: 5MB - الأنواع المقبولة: PDF, Word, Excel
+                            </small>
                         </div>
                     </div>
                     
@@ -672,64 +726,122 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
     <?php include 'includes/footer.php'; ?>
 
     <script>
-        // Modal Functions
-        const modal = document.getElementById('addProjetModal');
-        const btnOpenModal = document.getElementById('btnOpenModal');
-        const btnCloseModal = document.querySelector('.close');
+        // Variables globales
+        var modal = document.getElementById('addProjetModal');
+        var btnOpen = document.getElementById('btnOpenModal');
+        var btnClose = document.getElementById('btnCloseModal');
+        var btnCancel = document.getElementById('btnCancelModal');
         
-        // Open modal
-        btnOpenModal.addEventListener('click', function() {
-            modal.style.display = 'block';
+        // Ouvrir le modal
+        btnOpen.onclick = function() {
+            modal.classList.add('show');
             document.body.style.overflow = 'hidden';
-        });
+        }
         
-        // Close modal
-        btnCloseModal.addEventListener('click', function() {
-            modal.style.display = 'none';
+        // Fermer le modal
+        function fermerModal() {
+            modal.classList.remove('show');
             document.body.style.overflow = 'auto';
             document.getElementById('addProjetForm').reset();
             document.getElementById('modalEtab').disabled = true;
             document.getElementById('modalAlert').innerHTML = '';
-        });
+        }
         
-        // Close modal on outside click
-        window.addEventListener('click', function(event) {
+        btnClose.onclick = fermerModal;
+        btnCancel.onclick = fermerModal;
+        
+        // Fermer en cliquant à l'extérieur
+        window.onclick = function(event) {
             if (event.target == modal) {
-                modal.style.display = 'none';
-                document.body.style.overflow = 'auto';
-                document.getElementById('addProjetForm').reset();
-                document.getElementById('modalEtab').disabled = true;
-                document.getElementById('modalAlert').innerHTML = '';
+                fermerModal();
             }
-        });
+        }
         
-        // Close on cancel button
-        document.getElementById('btnCancelModal').addEventListener('click', function() {
-            modal.style.display = 'none';
-            document.body.style.overflow = 'auto';
-            document.getElementById('addProjetForm').reset();
-            document.getElementById('modalEtab').disabled = true;
-            document.getElementById('modalAlert').innerHTML = '';
-        });
-        
-        // Load etablissements based on ministere
-        document.getElementById('modalMinistere').addEventListener('change', function() {
-            const ministereId = this.value;
-            const etabSelect = document.getElementById('modalEtab');
+        // Charger les établissements
+        document.getElementById('modalMinistere').onchange = function() {
+            var ministereId = this.value;
+            var etabSelect = document.getElementById('modalEtab');
             
             etabSelect.innerHTML = '<option value="">جاري التحميل...</option>';
-            etabSelect.disabled = true;
             
             if (ministereId) {
                 fetch('get_etablissements.php?ministere=' + ministereId)
                     .then(response => response.json())
                     .then(data => {
-                        etabSelect.innerHTML = '<option value="">-- اختر المؤسسة --</option>';
-                        
                         if (data.success && data.etablissements.length > 0) {
-                            data.etablissements.forEach(etab => {
-                                const option = document.createElement('option');
+                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
+                            data.etablissements.forEach(function(etab) {
+                                var option = document.createElement('option');
                                 option.value = etab.idEtablissement;
                                 option.textContent = etab.libEtablissement;
                                 etabSelect.appendChild(option);
                             });
+                        } else {
+                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
+                        }
+                    })
+                    .catch(function(error) {
+                        console.error('Error:', error);
+                        etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
+                    });
+            } else {
+                etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
+            }
+        };
+        
+        // Validation du fichier
+        document.getElementById('fichier').onchange = function() {
+            var file = this.files[0];
+            if (file) {
+                var fileSize = file.size / 1024 / 1024; // En MB
+                var allowedTypes = ['application/pdf', 'application/msword', 
+                                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                   'application/vnd.ms-excel',
+                                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+                
+                if (fileSize > 5) {
+                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
+                    this.value = '';
+                    return false;
+                }
+                
+                if (!allowedTypes.includes(file.type)) {
+                    alert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel');
+                    this.value = '';
+                    return false;
+                }
+            }
+        };
+        
+        // Soumettre le formulaire
+        document.getElementById('addProjetForm').onsubmit = function(e) {
+            e.preventDefault();
+            
+            var formData = new FormData(this);
+            var alertDiv = document.getElementById('modalAlert');
+            
+            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الحفظ...</p></div>';
+            
+            fetch('projets.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
+                    setTimeout(function() {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                }
+            })
+            .catch(function(error) {
+                console.error('Error:', error);
+                alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
+            });
+        };
+    </script>
+</body>
+</html>
