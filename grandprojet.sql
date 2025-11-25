@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : ven. 21 nov. 2025 à 17:11
+-- Généré le : mar. 25 nov. 2025 à 16:39
 -- Version du serveur : 10.4.21-MariaDB
 -- Version de PHP : 7.3.31
 
@@ -60,6 +60,14 @@ CREATE TABLE `document` (
   `idExterne` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+--
+-- Déchargement des données de la table `document`
+--
+
+INSERT INTO `document` (`idDoc`, `idPro`, `libDoc`, `cheminAcces`, `type`, `idExterne`) VALUES
+(1, 6, 'التقرير الرقابي مشروع اقتناء 30 عربة مترو.', '../uploads/documents/doc_6_1764003257.pdf', 1, 6),
+(2, 7, 'مشروع منصة أسواق الإنتاج الوسط', '../uploads/documents/doc_7_1764005866.pdf', 1, 7);
+
 -- --------------------------------------------------------
 
 --
@@ -91,7 +99,33 @@ INSERT INTO `etablissement` (`idEtablissement`, `libEtablissement`, `adrEtabliss
 (10, 'المركز الوطني للتوثيق', 'نهج عبد الرزاق الشرايبي 1000 تونس', 1, 5),
 (11, 'مركز إفادة	', '66 شارع معاوية إبن ابي سفيان -2037- المنزه السابع\r\n', 1, 5),
 (12, 'المدرسة الوطنية للإدارة', '24 نهج الدكتور كلمات ميتيال فيل تونس', 1, 5),
-(13, 'المركز الأفريقي لتدريب الصحفيين والاتصال	', '9 نهج هوكر دوليتل 1002 تونس بلفيدار - تونس', 1, 5);
+(13, 'المركز الأفريقي لتدريب الصحفيين والاتصال	', '9 نهج هوكر دوليتل 1002 تونس بلفيدار - تونس', 1, 5),
+(15, 'الوزارة', '', 17, 5),
+(33, 'الوزارة', '', 11, 5),
+(34, 'الوزارة', '', 7, 5),
+(35, 'الوزارة', '', 15, 5),
+(36, 'الوزارة', '', 8, 5),
+(37, 'الوزارة', '', 9, 5),
+(38, 'الوزارة', '', 2, 5),
+(39, 'الوزارة', '', 3, 5),
+(40, 'الوزارة', '', 4, 5),
+(41, 'الوزارة', '', 5, 5),
+(42, 'الوزارة', '', 6, 5),
+(43, 'الوزارة', '', 10, 5),
+(44, 'الوزارة', '', 12, 5),
+(45, 'الوزارة', '', 13, 5),
+(46, 'الوزارة', '', 14, 5),
+(47, 'الوزارة', '', 18, 5),
+(48, 'الوزارة', '', 5, 5),
+(49, 'الوزارة', '', 16, 5),
+(50, 'الوزارة', '', 19, 5),
+(51, 'الوزارة', '', 20, 5),
+(52, 'الوزارة', '', 21, 5),
+(53, 'الوزارة', '', 22, 5),
+(54, 'الوزارة', '', 23, 5),
+(55, 'الوزارة', '', 24, 5),
+(56, 'الوزارة', '', 25, 5),
+(57, 'الوزارة', '', 5, 5);
 
 -- --------------------------------------------------------
 
@@ -185,7 +219,32 @@ INSERT INTO `journal` (`idJournal`, `idUser`, `action`, `date`) VALUES
 (14, 8, 'تسجيل الخروج', '2025-11-21'),
 (15, 1, 'تسجيل الدخول', '2025-11-21'),
 (16, 1, 'تسجيل الخروج', '2025-11-21'),
-(17, 1, 'تسجيل الدخول', '2025-11-21');
+(17, 1, 'تسجيل الدخول', '2025-11-21'),
+(18, 1, 'تسجيل الدخول', '2025-11-24'),
+(19, 1, 'تسجيل الدخول', '2025-11-24'),
+(20, 34, 'تسجيل الخروج', '2025-11-24'),
+(21, 1, 'تسجيل الدخول', '2025-11-24'),
+(22, 1, 'تسجيل الخروج', '2025-11-24'),
+(23, 1, 'تسجيل الدخول', '2025-11-24'),
+(24, 1, 'تسجيل الدخول', '2025-11-24'),
+(25, 34, 'تسجيل الخروج', '2025-11-24'),
+(26, 1, 'تسجيل الدخول', '2025-11-24'),
+(27, 1, 'تسجيل الدخول', '2025-11-24'),
+(28, 1, 'تسجيل الدخول', '2025-11-24'),
+(29, 34, 'تسجيل الخروج', '2025-11-24'),
+(30, 1, 'تسجيل الدخول', '2025-11-24'),
+(31, 34, 'تسجيل الخروج', '2025-11-24'),
+(32, 1, 'تسجيل الدخول', '2025-11-24'),
+(33, 34, 'تسجيل الخروج', '2025-11-24'),
+(34, 1, 'تسجيل الدخول', '2025-11-24'),
+(35, 1, 'إضافة مقترح جديد رقم 6: مشروع اقتناء 30 عربة مترو لف?', '2025-11-24'),
+(36, 34, 'تسجيل الخروج', '2025-11-24'),
+(37, 1, 'تسجيل الدخول', '2025-11-24'),
+(38, 34, 'تسجيل الخروج', '2025-11-24'),
+(39, 1, 'تسجيل الدخول', '2025-11-24'),
+(40, 34, 'تسجيل الخروج', '2025-11-24'),
+(41, 1, 'تسجيل الدخول', '2025-11-24'),
+(42, 1, 'إضافة مقترح جديد رقم 7: مشروع منصة أسواق الإنتاج ال', '2025-11-24');
 
 -- --------------------------------------------------------
 
@@ -265,6 +324,14 @@ CREATE TABLE `projet` (
   `dateCreation` datetime NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+--
+-- Déchargement des données de la table `projet`
+--
+
+INSERT INTO `projet` (`idPro`, `idMinistere`, `idEtab`, `sujet`, `dateArrive`, `procedurePro`, `cout`, `proposition`, `idUser`, `etat`, `dateCreation`) VALUES
+(6, 17, 15, 'مشروع اقتناء 30 عربة مترو لفائدة شركة النقل بتونس ضمن المشاريع العمومية الكبري ذات الطابع الإستراتيجي.', '2025-02-14', 'جديد', 450, 'ادراج مشروع اقتناء 30 عربة مترو ضمن المشاريع العمومية الكبري ذات الطابع الإستراتيجي.', 2, 0, '2025-11-24 17:54:17'),
+(7, 11, 33, 'مشروع منصة أسواق الإنتاج الوسط.', '2025-01-02', 'جديد', 116, 'ادراج مشروع منصة أسواق الإنتاج الوسط صلب المشاريع الكبري كمشروع وطني استراتيجي ذو اولوية.', 2, 0, '2025-11-24 18:37:46');
+
 -- --------------------------------------------------------
 
 --
@@ -333,10 +400,10 @@ CREATE TABLE `user` (
 --
 
 INSERT INTO `user` (`idUser`, `nomUser`, `emailUser`, `typeCpt`, `login`, `pw`) VALUES
-(1, 'نضال الطرهوني', 'nidtar123@gmail.com', 0, 't.nidhal', '$2y$12$aVChoAiXyEL4lQtw9kCMDuyd34U8v3SBWiNV2xA3M3.AS0PNDOBg2'),
-(2, 'إنصاف زمزم', 'insaf.zemzem2017@gmail.com', 0, 'i.zemzem', '$2y$12$HARA4nVt2ZHqv4SYTf1G0.bz1e5psG8yqSPH3mKeoQfacV2G/LUWO'),
-(3, 'سفيان الخياري', 'sofian.khiari@pm.gov.tn', 0, 's.khiari', '$2y$12$LQv3c1yqjLVMwdfbqQXH/ubhBJ8K9bZQq8WJZ7.5qNLHh5sJxWpDC$2y$12$PkyoPQSAQ/ssivQVcABShOTr1oFPrpbLGR.gxKNZO4WLjSOdaik.S'),
-(4, 'منى بن حسن', 'mouna.benhassen@pm.gov.tn', 0, 'm.benhassen', '$2y$12$dOJD2UpzQpvqgkcLsVJzTu7cIojj.7QB8zWSXgCnwUtM0jBGQ/2lq');
+(1, 'نضال الطرهوني', 'nidtar123@gmail.com', 1, 't.nidhal', '$2y$12$w47adqQpQIPgDZyZ41Dq4.bTBvXFi151ZXyZx9iPa7H9w1qoO2NDq'),
+(2, 'إنصاف زمزم', 'insaf.zemzem2017@gmail.com', 2, 'admin', '$2y$12$HARA4nVt2ZHqv4SYTf1G0.bz1e5psG8yqSPH3mKeoQfacV2G/LUWO'),
+(3, 'سفيان الخياري', 'sofian.khiari@pm.gov.tn', 2, 's.khiari', '$2y$12$LQv3c1yqjLVMwdfbqQXH/ubhBJ8K9bZQq8WJZ7.5qNLHh5sJxWpDC$2y$12$PkyoPQSAQ/ssivQVcABShOTr1oFPrpbLGR.gxKNZO4WLjSOdaik.S'),
+(4, 'منى بن حسن', 'mouna.benhassen@pm.gov.tn', 2, 'm.benhassen', '$2y$12$dOJD2UpzQpvqgkcLsVJzTu7cIojj.7QB8zWSXgCnwUtM0jBGQ/2lq');
 
 --
 -- Index pour les tables déchargées
@@ -459,13 +526,13 @@ ALTER TABLE `commission`
 -- AUTO_INCREMENT pour la table `document`
 --
 ALTER TABLE `document`
-  MODIFY `idDoc` int(11) NOT NULL AUTO_INCREMENT;
+  MODIFY `idDoc` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=3;
 
 --
 -- AUTO_INCREMENT pour la table `etablissement`
 --
 ALTER TABLE `etablissement`
-  MODIFY `idEtablissement` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
+  MODIFY `idEtablissement` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=58;
 
 --
 -- AUTO_INCREMENT pour la table `fournisseur`
@@ -483,7 +550,7 @@ ALTER TABLE `gouvernorat`
 -- AUTO_INCREMENT pour la table `journal`
 --
 ALTER TABLE `journal`
-  MODIFY `idJournal` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=18;
+  MODIFY `idJournal` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=43;
 
 --
 -- AUTO_INCREMENT pour la table `lot`
@@ -501,7 +568,7 @@ ALTER TABLE `ministere`
 -- AUTO_INCREMENT pour la table `projet`
 --
 ALTER TABLE `projet`
-  MODIFY `idPro` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `idPro` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT pour la table `projetcommission`

@@ -1,4 +1,5 @@
 <?php
+ob_start();
 require_once '../Config/Database.php';
 require_once '../Config/Security.php';
 require_once '../Config/Permissions.php';
@@ -10,6 +11,105 @@ if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 
     Security::logout();
 }
 $_SESSION['last_activity'] = time();
+
+// Traitement de l'upload du التقرير الرقابي
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_taqrir') {
+    // Nettoyer tout buffer de sortie
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    
+    try {
+        if (!Security::validateCSRFToken($_POST['csrf_token'])) {
+            echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        $projetId = intval($_POST['projetId']);
+        $libDoc = Security::sanitizeInput($_POST['libDoc']);
+        
+        if (empty($libDoc)) {
+            echo json_encode(['success' => false, 'message' => 'يرجى إدخال عنوان التقرير'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // Vérifier le projet
+        $sqlCheck = "SELECT idUser FROM projet WHERE idPro = :projetId";
+        $stmtCheck = $db->prepare($sqlCheck);
+        $stmtCheck->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+        $stmtCheck->execute();
+        $projetCheck = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$projetCheck) {
+            echo json_encode(['success' => false, 'message' => 'المشروع غير موجود. الرجاء التحقق من رقم المشروع'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        if (!Permissions::canEditProjet($projetCheck['idUser'])) {
+            echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        if (!isset($_FILES['fichier_taqrir']) || $_FILES['fichier_taqrir']['error'] !== UPLOAD_ERR_OK) {
+            echo json_encode(['success' => false, 'message' => 'لم يتم اختيار ملف أو حدث خطأ في الرفع'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        $uploadDir = dirname(__DIR__) . '/uploads/documents/';
+        
+        if (!file_exists($uploadDir)) {
+            mkdir($uploadDir, 0777, true);
+        }
+        
+        $fileName = $_FILES['fichier_taqrir']['name'];
+        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+        
+        if (!in_array($fileExtension, $allowedExtensions)) {
+            echo json_encode(['success' => false, 'message' => 'نوع الملف غير مقبول. استخدم PDF, Word أو Excel'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        $newFileName = 'taqrir_' . $projetId . '_' . time() . '.' . $fileExtension;
+        $filePath = $uploadDir . $newFileName;
+        $filePathDB = '../uploads/documents/' . $newFileName;
+        
+        if (!move_uploaded_file($_FILES['fichier_taqrir']['tmp_name'], $filePath)) {
+            echo json_encode(['success' => false, 'message' => 'فشل في رفع الملف'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        $db->beginTransaction();
+        
+        // Insertion du document type 11
+        $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                   VALUES (:idPro, :libDoc, :cheminAcces, 11, :idExterne)";
+        $stmtDoc = $db->prepare($sqlDoc);
+        $stmtDoc->bindParam(':idPro', $projetId, PDO::PARAM_INT);
+        $stmtDoc->bindParam(':libDoc', $libDoc);
+        $stmtDoc->bindParam(':cheminAcces', $filePathDB);
+        $stmtDoc->bindParam(':idExterne', $projetId, PDO::PARAM_INT);
+        $stmtDoc->execute();
+        
+        // Log l'action
+        $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
+        $logStmt = $db->prepare($logSql);
+        $logStmt->bindParam(':idUser', $_SESSION['user_id']);
+        $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId;
+        $logStmt->bindParam(':action', $action);
+        $logStmt->execute();
+        
+        $db->commit();
+        
+        echo json_encode(['success' => true, 'message' => 'تم إضافة التقرير الرقابي بنجاح'], JSON_UNESCAPED_UNICODE);
+        
+    } catch (Exception $e) {
+        if (isset($db)) {
+            $db->rollBack();
+        }
+        echo json_encode(['success' => false, 'message' => 'حدث خطأ: ' . $e->getMessage()], JSON_UNESCAPED_UNICODE);
+    }
+    exit();
+}
 
 $database = new Database();
 $db = $database->getConnection();
@@ -37,9 +137,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $cout = Security::sanitizeInput($_POST['cout']);
     $proposition = Security::sanitizeInput($_POST['proposition']);
     $idRapporteur = Security::sanitizeInput($_POST['idRapporteur']);
+    $libDoc = Security::sanitizeInput($_POST['libDoc']);
     
     // Si pas d'établissement sélectionné, mettre NULL
-    if (empty($idEtab)) {
+    if (empty($idEtab) || $idEtab === 'الوزارة') {
         $idEtab = null;
     }
     
@@ -48,7 +149,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         
         // Insertion du projet
         $sql = "INSERT INTO projet (idMinistere, idEtab, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
-                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 1, NOW())";
+                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 0, NOW())";
         
         $stmt = $db->prepare($sql);
         $stmt->bindParam(':idMinistere', $idMinistere);
@@ -81,12 +182,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     $filePath = $uploadDir . $newFileName;
                     
                     if (move_uploaded_file($_FILES['fichier']['tmp_name'], $filePath)) {
-                        // Insertion du document dans la table
+                        // Insertion du document dans la table avec libDoc
                         $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
                                    VALUES (:idPro, :libDoc, :cheminAcces, 1, :idExterne)";
                         $stmtDoc = $db->prepare($sqlDoc);
                         $stmtDoc->bindParam(':idPro', $projetId);
-                        $stmtDoc->bindParam(':libDoc', $fileName);
+                        $stmtDoc->bindParam(':libDoc', $libDoc);
                         $stmtDoc->bindParam(':cheminAcces', $filePath);
                         $stmtDoc->bindParam(':idExterne', $projetId);
                         $stmtDoc->execute();
@@ -127,7 +228,11 @@ $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
             WHEN p.etat = 2 THEN 'الموافقة'
             WHEN p.etat = 3 THEN 'عدم الموافقة'
             ELSE 'غير معروف'
-        END as etatLib
+        END as etatLib,
+        (SELECT libDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarah,
+        (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
+        (SELECT libDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrir,
+        (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
         FROM projet p
         LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
         LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
@@ -493,23 +598,27 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             
             <div class="stats-summary">
                 <div class="stat-box">
-                    <div class="number" style="color: #667eea;"><?php echo count($projets); ?></div>
-                    <div class="label">إجمالي المقترحات</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number" style="color: #ffc107;"><?php echo count(array_filter($projets, fn($p) => $p['etat'] == 0)); ?></div>
+                    <div class="number" style="color: #ffc107;">
+                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 0; })); ?>
+                    </div>
                     <div class="label">بصدد الدرس</div>
                 </div>
                 <div class="stat-box">
-                    <div class="number" style="color: #17a2b8;"><?php echo count(array_filter($projets, fn($p) => $p['etat'] == 1)); ?></div>
+                    <div class="number" style="color: #17a2b8;">
+                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 1; })); ?>
+                    </div>
                     <div class="label">الإحالة على اللجنة</div>
                 </div>
                 <div class="stat-box">
-                    <div class="number" style="color: #4caf50;"><?php echo count(array_filter($projets, fn($p) => $p['etat'] == 2)); ?></div>
+                    <div class="number" style="color: #4caf50;">
+                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 2; })); ?>
+                    </div>
                     <div class="label">الموافقة</div>
                 </div>
                 <div class="stat-box">
-                    <div class="number" style="color: #dc3545;"><?php echo count(array_filter($projets, fn($p) => $p['etat'] == 3)); ?></div>
+                    <div class="number" style="color: #dc3545;">
+                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 3; })); ?>
+                    </div>
                     <div class="label">عدم الموافقة</div>
                 </div>
             </div>
@@ -520,16 +629,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                         <div class="filter-group">
                             <label>البحث</label>
                             <input type="text" name="search" placeholder="ابحث عن مقترح..." value="<?php echo htmlspecialchars($searchQuery); ?>">
-                        </div>
-                        <div class="filter-group">
-                            <label>الحالة</label>
-                            <select name="etat">
-                                <option value="">جميع الحالات</option>
-                                <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
-                                <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
-                                <option value="2" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الموافقة</option>
-                                <option value="3" <?php echo $filterEtat === '3' ? 'selected' : ''; ?>>عدم الموافقة</option>
-                            </select>
                         </div>
                         <div class="filter-group">
                             <label>الوزارة</label>
@@ -543,6 +642,24 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                        <div class="filter-group">
+                            <label>الموسسات</label>
+                            <select name="ministere">
+                                <option value="">جميع المؤسسات</option>
+                                <option value=""> </option>
+                            </select>
+                        </div>
+                        <div class="filter-group">
+                            <label>الحالة</label>
+                            <select name="etat">
+                                <option value="">جميع الحالات</option>
+                                <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
+                                <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
+                                <option value="2" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الموافقة</option>
+                                <option value="3" <?php echo $filterEtat === '3' ? 'selected' : ''; ?>>عدم الموافقة</option>
+                            </select>
+                        </div>
+                        
                     </div>
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
@@ -559,7 +676,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                     <table>
                         <thead>
                             <tr>
-                                <th>رقم</th>
                                 <th>الموضوع</th>
                                 <th>الوزارة</th>
                                 <th>المؤسسة</th>
@@ -567,29 +683,61 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                 <th>الكلفة (د.ت)</th>
                                 <th>الحالة</th>
                                 <th>المستخدم</th>
+                                <th>المقترح</th>
+                                <th>التقرير الرقابي</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody>
                             <?php foreach ($projets as $projet): ?>
                                 <tr>
-                                    <td><?php echo $projet['idPro']; ?></td>
-                                    <td style="text-align: right;"><?php echo htmlspecialchars(substr($projet['sujet'], 0, 100)); ?></td>
+                                    <td style="text-align: right;"><?php echo htmlspecialchars(substr($projet['sujet'], 0, 200)); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libMinistere']); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libEtablissement']); ?></td>
                                     <td><?php echo date('Y/m/d', strtotime($projet['dateArrive'])); ?></td>
                                     <td><?php echo number_format($projet['cout'], 2, '.', ' '); ?></td>
                                     <td>
-                                        <span class="badge <?php echo match($projet['etat']) {
-                                            0 => 'badge-pending', 1 => 'badge-processing',
-                                            2 => 'badge-approved', 3 => 'badge-rejected', default => 'badge-pending'
-                                        }; ?>">
+                                        <span class="badge <?php 
+                                            switch($projet['etat']) {
+                                                case 0: echo 'badge-pending'; break;
+                                                case 1: echo 'badge-processing'; break;
+                                                case 2: echo 'badge-approved'; break;
+                                                case 3: echo 'badge-rejected'; break;
+                                                default: echo 'badge-pending';
+                                            }
+                                        ?>">
                                             <?php echo $projet['etatLib']; ?>
                                         </span>
                                     </td>
                                     <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
                                     <td>
-                                        <a href="voir_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-view">عرض</a>
+                                        <?php if ($projet['docMuqtarahId']): ?>
+                                            <a href="view_document.php?id=<?php echo $projet['docMuqtarahId']; ?>" 
+                                               target="_blank" style="color: #4caf50; text-decoration: none;">
+                                                📄 <?php echo htmlspecialchars(substr($projet['docMuqtarah'], 0, 20)); ?>
+                                            </a>
+                                        <?php else: ?>
+                                            <span style="color: #999;">-</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($projet['docTaqrirId']): ?>
+                                            <a href="view_document.php?id=<?php echo $projet['docTaqrirId']; ?>" 
+                                               target="_blank" style="color: #ff9800; text-decoration: none;">
+                                                📊 <?php echo htmlspecialchars(substr($projet['docTaqrir'], 0, 20)); ?>
+                                            </a>
+                                        <?php else: ?>
+                                            <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
+                                                <button onclick="openTaqrirModal(<?php echo $projet['idPro']; ?>)" 
+                                                        style="background: #ff9800; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
+                                                    ➕ إضافة
+                                                </button>
+                                            <?php else: ?>
+                                                <span style="color: #999;">-</span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
                                         <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
                                             <a href="modifier_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-edit">تعديل</a>
                                         <?php endif; ?>
@@ -617,12 +765,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                 <span class="close" id="btnCloseModal">&times;</span>
             </div>
             <div class="modal-body">
-                <div id="modalAlert"></div>
-                
-                <div class="info-box">
-                    ℹ️ سيتم تعيين حالة المقترح تلقائياً إلى "الإحالة على اللجنة"
-                </div>
-                
+                <div id="modalAlert"></div>    
                 <form id="addProjetForm" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
                     <input type="hidden" name="action" value="add_projet">
@@ -632,7 +775,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                         <div class="form-group form-group-full">
                             <label>الموضوع <span class="required">*</span></label>
                             <textarea name="sujet" class="form-control" required 
-                                      placeholder="أدخل موضوع المقترح بالتفصيل..."></textarea>
+                                      placeholder=" موضوع المقترح ..."></textarea>
                         </div>
                         
                         <!-- 2. الوزارة -->
@@ -652,26 +795,24 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                         <div class="form-group">
                             <label>المؤسسة <span class="required">*</span></label>
                             <select name="idEtab" id="modalEtab" class="form-control" required>
-                                <option value="">-- الوزارة --</option>
+                                <option value="">--أختر الوزارة --</option>
                             </select>
                         </div>
                         
                         <!-- 4. تاريخ الإعلام -->
                         <div class="form-group">
-                            <label>تاريخ الإعلام <span class="required">*</span></label>
+                            <label> تاريخ التعهد <span class="required">*</span></label>
                             <input type="date" name="dateArrive" class="form-control" required 
                                    value="<?php echo date('Y-m-d'); ?>">
                         </div>
                         
                         <!-- 5. الإجراء -->
                         <div class="form-group">
-                            <label>الإجراء <span class="required">*</span></label>
+                            <label>صيغة المشروع <span class="required">*</span></label>
                             <select name="procedurePro" class="form-control" required>
-                                <option value="">-- اختر الإجراء --</option>
-                                <option value="استشارة">استشارة</option>
-                                <option value="طلب عروض">طلب عروض</option>
-                                <option value="التفاوض المباشر">التفاوض المباشر</option>
-                                <option value="أمر شراء">أمر شراء</option>
+                                <option value="">-- اختر الصيغة --</option>
+                                <option value="جديد"> مشروع جديد </option>
+                                <option value="بصدد الإنجاز">بصدد الإنجاز</option>
                             </select>
                         </div>
                         
@@ -703,8 +844,15 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                             </select>
                         </div>
                         
-                        <!-- 9. الملف -->
+                        <!-- 9. عنوان الملف -->
                         <div class="form-group">
+                            <label>عنوان المقترح <span class="required">*</span></label>
+                            <input type="text" name="libDoc" class="form-control" required 
+                                   placeholder="أدخل عنوان المقترح">
+                        </div>
+                        
+                        <!-- 10. الملف -->
+                        <div class="form-group form-group-full">
                             <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
                             <input type="file" name="fichier" id="fichier" class="form-control" 
                                    accept=".pdf,.doc,.docx,.xls,.xlsx" required>
@@ -723,6 +871,45 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
         </div>
     </div>
 
+    <!-- MODAL AJOUT التقرير الرقابي -->
+    <div id="taqrirModal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>📊 إضافة التقرير الرقابي</h2>
+                <span class="close" id="btnCloseTaqrir">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="taqrirAlert"></div>
+                
+                <form id="taqrirForm" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                    <input type="hidden" name="action" value="upload_taqrir">
+                    <input type="hidden" name="projetId" id="taqrirProjetId">
+                    
+                    <div class="form-group">
+                        <label>عنوان التقرير <span class="required">*</span></label>
+                        <input type="text" name="libDoc" class="form-control" required 
+                               placeholder="أدخل عنوان التقرير الرقابي">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
+                        <input type="file" name="fichier_taqrir" id="fichier_taqrir" class="form-control" 
+                               accept=".pdf,.doc,.docx,.xls,.xlsx" required>
+                        <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                            الحجم الأقصى: 5MB
+                        </small>
+                    </div>
+                    
+                    <div class="modal-footer">
+                        <button type="submit" class="btn btn-success">✓ رفع التقرير</button>
+                        <button type="button" class="btn btn-secondary" id="btnCancelTaqrir">✕ إلغاء</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
     <?php include 'includes/footer.php'; ?>
 
     <script>
@@ -732,13 +919,96 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
         var btnClose = document.getElementById('btnCloseModal');
         var btnCancel = document.getElementById('btnCancelModal');
         
-        // Ouvrir le modal
-        btnOpen.onclick = function() {
-            modal.classList.add('show');
+        var taqrirModal = document.getElementById('taqrirModal');
+        var btnCloseTaqrir = document.getElementById('btnCloseTaqrir');
+        var btnCancelTaqrir = document.getElementById('btnCancelTaqrir');
+        
+        // Ouvrir modal التقرير الرقابي
+        function openTaqrirModal(projetId) {
+            document.getElementById('taqrirProjetId').value = projetId;
+            taqrirModal.classList.add('show');
             document.body.style.overflow = 'hidden';
         }
         
-        // Fermer le modal
+        // Fermer modal التقرير الرقابي
+        function closeTaqrirModal() {
+            taqrirModal.classList.remove('show');
+            document.body.style.overflow = 'auto';
+            document.getElementById('taqrirForm').reset();
+            document.getElementById('taqrirAlert').innerHTML = '';
+        }
+        
+        if (btnCloseTaqrir) {
+            btnCloseTaqrir.onclick = closeTaqrirModal;
+        }
+        
+        if (btnCancelTaqrir) {
+            btnCancelTaqrir.onclick = closeTaqrirModal;
+        }
+        
+        // Soumettre التقرير الرقابي
+        document.getElementById('taqrirForm').onsubmit = function(e) {
+            e.preventDefault();
+            
+            var formData = new FormData(this);
+            var alertDiv = document.getElementById('taqrirAlert');
+            
+            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #ff9800; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الرفع...</p></div>';
+            
+            fetch('projets.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
+                    setTimeout(function() {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                }
+            })
+            .catch(function(error) {
+                console.error('Error:', error);
+                alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
+            });
+        };
+        
+        // Validation fichier التقرير الرقابي
+        document.getElementById('fichier_taqrir').onchange = function() {
+            var file = this.files[0];
+            if (file) {
+                var fileSize = file.size / 1024 / 1024;
+                var allowedTypes = ['application/pdf', 'application/msword', 
+                                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                   'application/vnd.ms-excel',
+                                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+                
+                if (fileSize > 5) {
+                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
+                    this.value = '';
+                    return false;
+                }
+                
+                if (!allowedTypes.includes(file.type)) {
+                    alert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel');
+                    this.value = '';
+                    return false;
+                }
+            }
+        };
+        
+        // Ouvrir le modal ajout projet
+        if (btnOpen) {
+            btnOpen.onclick = function() {
+                modal.classList.add('show');
+                document.body.style.overflow = 'hidden';
+            }
+        }
+        
+        // Fermer le modal ajout projet
         function fermerModal() {
             modal.classList.remove('show');
             document.body.style.overflow = 'auto';
@@ -747,13 +1017,20 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             document.getElementById('modalAlert').innerHTML = '';
         }
         
-        btnClose.onclick = fermerModal;
-        btnCancel.onclick = fermerModal;
+        if (btnClose) {
+            btnClose.onclick = fermerModal;
+        }
+        if (btnCancel) {
+            btnCancel.onclick = fermerModal;
+        }
         
         // Fermer en cliquant à l'extérieur
         window.onclick = function(event) {
             if (event.target == modal) {
                 fermerModal();
+            }
+            if (event.target == taqrirModal) {
+                closeTaqrirModal();
             }
         }
         
