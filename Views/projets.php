@@ -12,6 +12,12 @@ if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 
 }
 $_SESSION['last_activity'] = time();
 
+// ==========================================
+// INITIALISER LA BASE DE DONNÉES ICI (AVANT TOUT)
+// ==========================================
+$database = new Database();
+$db = $database->getConnection();
+
 // Traitement de l'upload du التقرير الرقابي
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_taqrir') {
     // Nettoyer tout buffer de sortie
@@ -19,11 +25,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     header('Content-Type: application/json; charset=utf-8');
     
     try {
+        // 1. Validation CSRF
         if (!Security::validateCSRFToken($_POST['csrf_token'])) {
             echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان'], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
+        // 2. Récupération et validation des données
         $projetId = intval($_POST['projetId']);
         $libDoc = Security::sanitizeInput($_POST['libDoc']);
         
@@ -32,7 +40,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             exit();
         }
         
-        // Vérifier le projet
+        // 3. Vérifier que le projet existe
         $sqlCheck = "SELECT idUser FROM projet WHERE idPro = :projetId";
         $stmtCheck = $db->prepare($sqlCheck);
         $stmtCheck->bindParam(':projetId', $projetId, PDO::PARAM_INT);
@@ -44,22 +52,49 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             exit();
         }
         
+        // 4. Vérifier les permissions
         if (!Permissions::canEditProjet($projetCheck['idUser'])) {
-            echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية'], JSON_UNESCAPED_UNICODE);
+            echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لتعديل هذا المقترح'], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
+        // 5. Vérifier le fichier uploadé
         if (!isset($_FILES['fichier_taqrir']) || $_FILES['fichier_taqrir']['error'] !== UPLOAD_ERR_OK) {
-            echo json_encode(['success' => false, 'message' => 'لم يتم اختيار ملف أو حدث خطأ في الرفع'], JSON_UNESCAPED_UNICODE);
+            $errorMsg = 'لم يتم اختيار ملف';
+            if (isset($_FILES['fichier_taqrir']['error'])) {
+                switch ($_FILES['fichier_taqrir']['error']) {
+                    case UPLOAD_ERR_INI_SIZE:
+                    case UPLOAD_ERR_FORM_SIZE:
+                        $errorMsg = 'حجم الملف كبير جداً (الحد الأقصى 5MB)';
+                        break;
+                    case UPLOAD_ERR_PARTIAL:
+                        $errorMsg = 'تم رفع الملف جزئياً فقط';
+                        break;
+                    case UPLOAD_ERR_NO_FILE:
+                        $errorMsg = 'لم يتم اختيار ملف';
+                        break;
+                    default:
+                        $errorMsg = 'حدث خطأ في رفع الملف';
+                }
+            }
+            echo json_encode(['success' => false, 'message' => $errorMsg], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
-        $uploadDir = dirname(__DIR__) . '/uploads/documents/';
+        // 6. Validation de la taille du fichier (5MB max)
+        $maxFileSize = 5 * 1024 * 1024; // 5MB en bytes
+        if ($_FILES['fichier_taqrir']['size'] > $maxFileSize) {
+            echo json_encode(['success' => false, 'message' => 'حجم الملف يجب أن يكون أقل من 5 ميغابايت'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
         
+        // 7. Créer le dossier s'il n'existe pas
+        $uploadDir = dirname(__DIR__) . '/uploads/documents/';
         if (!file_exists($uploadDir)) {
             mkdir($uploadDir, 0777, true);
         }
         
+        // 8. Validation du type de fichier
         $fileName = $_FILES['fichier_taqrir']['name'];
         $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
         $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
@@ -69,50 +104,85 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             exit();
         }
         
+        // 9. Générer un nom de fichier unique
         $newFileName = 'taqrir_' . $projetId . '_' . time() . '.' . $fileExtension;
         $filePath = $uploadDir . $newFileName;
         $filePathDB = '../uploads/documents/' . $newFileName;
         
+        // 10. Déplacer le fichier uploadé
         if (!move_uploaded_file($_FILES['fichier_taqrir']['tmp_name'], $filePath)) {
             echo json_encode(['success' => false, 'message' => 'فشل في رفع الملف'], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
+        // 11. Insertion dans la base de données
         $db->beginTransaction();
         
-        // Insertion du document type 11
-        $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                   VALUES (:idPro, :libDoc, :cheminAcces, 11, :idExterne)";
-        $stmtDoc = $db->prepare($sqlDoc);
-        $stmtDoc->bindParam(':idPro', $projetId, PDO::PARAM_INT);
-        $stmtDoc->bindParam(':libDoc', $libDoc);
-        $stmtDoc->bindParam(':cheminAcces', $filePathDB);
-        $stmtDoc->bindParam(':idExterne', $projetId, PDO::PARAM_INT);
-        $stmtDoc->execute();
-        
-        // Log l'action
-        $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
-        $logStmt = $db->prepare($logSql);
-        $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-        $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId;
-        $logStmt->bindParam(':action', $action);
-        $logStmt->execute();
-        
-        $db->commit();
-        
-        echo json_encode(['success' => true, 'message' => 'تم إضافة التقرير الرقابي بنجاح'], JSON_UNESCAPED_UNICODE);
+        try {
+            // Vérifier s'il existe déjà un تقرير رقابي pour ce projet
+            $sqlCheckExisting = "SELECT idDoc FROM document WHERE idPro = :idPro AND type = 11";
+            $stmtCheckExisting = $db->prepare($sqlCheckExisting);
+            $stmtCheckExisting->bindParam(':idPro', $projetId, PDO::PARAM_INT);
+            $stmtCheckExisting->execute();
+            
+            if ($stmtCheckExisting->rowCount() > 0) {
+                // Mettre à jour l'existant
+                $existingDoc = $stmtCheckExisting->fetch(PDO::FETCH_ASSOC);
+                $sqlUpdate = "UPDATE document 
+                             SET libDoc = :libDoc, cheminAcces = :cheminAcces 
+                             WHERE idDoc = :idDoc";
+                $stmtUpdate = $db->prepare($sqlUpdate);
+                $stmtUpdate->bindParam(':libDoc', $libDoc);
+                $stmtUpdate->bindParam(':cheminAcces', $filePathDB);
+                $stmtUpdate->bindParam(':idDoc', $existingDoc['idDoc'], PDO::PARAM_INT);
+                $stmtUpdate->execute();
+            } else {
+                // Insérer un nouveau document type 11
+                $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                           VALUES (:idPro, :libDoc, :cheminAcces, 11, :idExterne)";
+                $stmtDoc = $db->prepare($sqlDoc);
+                $stmtDoc->bindParam(':idPro', $projetId, PDO::PARAM_INT);
+                $stmtDoc->bindParam(':libDoc', $libDoc);
+                $stmtDoc->bindParam(':cheminAcces', $filePathDB);
+                $stmtDoc->bindParam(':idExterne', $projetId, PDO::PARAM_INT);
+                $stmtDoc->execute();
+            }
+            
+            // 12. Logger l'action
+            $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
+            $logStmt = $db->prepare($logSql);
+            $logStmt->bindParam(':idUser', $_SESSION['user_id']);
+            $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId . ": " . $libDoc;
+            $logStmt->bindParam(':action', $action);
+            $logStmt->execute();
+            
+            $db->commit();
+            
+            echo json_encode([
+                'success' => true, 
+                'message' => 'تم إضافة التقرير الرقابي بنجاح'
+            ], JSON_UNESCAPED_UNICODE);
+            
+        } catch (PDOException $e) {
+            $db->rollBack();
+            // Supprimer le fichier uploadé en cas d'erreur BD
+            if (file_exists($filePath)) {
+                unlink($filePath);
+            }
+            throw $e;
+        }
         
     } catch (Exception $e) {
-        if (isset($db)) {
+        if (isset($db) && $db->inTransaction()) {
             $db->rollBack();
         }
-        echo json_encode(['success' => false, 'message' => 'حدث خطأ: ' . $e->getMessage()], JSON_UNESCAPED_UNICODE);
+        echo json_encode([
+            'success' => false, 
+            'message' => 'حدث خطأ: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
     }
     exit();
 }
-
-$database = new Database();
-$db = $database->getConnection();
 
 // Vérifier la permission de création
 if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -120,7 +190,7 @@ if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
     exit();
 }
 
-// Traitement AJAX pour l'ajout
+// Traitement AJAX pour l'ajout de projet
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_projet') {
     header('Content-Type: application/json');
     
@@ -139,7 +209,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     $idRapporteur = Security::sanitizeInput($_POST['idRapporteur']);
     $libDoc = Security::sanitizeInput($_POST['libDoc']);
     
-    // Si pas d'établissement sélectionné, mettre NULL
     if (empty($idEtab) || $idEtab === 'الوزارة') {
         $idEtab = null;
     }
@@ -147,7 +216,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     try {
         $db->beginTransaction();
         
-        // Insertion du projet
         $sql = "INSERT INTO projet (idMinistere, idEtab, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
                 VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 0, NOW())";
         
@@ -164,11 +232,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         if ($stmt->execute()) {
             $projetId = $db->lastInsertId();
             
-            // Gestion du fichier
+            // Gestion du fichier المقترح
             if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
-                $uploadDir = '../uploads/documents/';
+                $uploadDir = dirname(__DIR__) . '/uploads/documents/';
                 
-                // Créer le dossier s'il n'existe pas
                 if (!file_exists($uploadDir)) {
                     mkdir($uploadDir, 0777, true);
                 }
@@ -180,15 +247,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 if (in_array($fileExtension, $allowedExtensions)) {
                     $newFileName = 'doc_' . $projetId . '_' . time() . '.' . $fileExtension;
                     $filePath = $uploadDir . $newFileName;
+                    $filePathDB = '../uploads/documents/' . $newFileName;
                     
                     if (move_uploaded_file($_FILES['fichier']['tmp_name'], $filePath)) {
-                        // Insertion du document dans la table avec libDoc
                         $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
                                    VALUES (:idPro, :libDoc, :cheminAcces, 1, :idExterne)";
                         $stmtDoc = $db->prepare($sqlDoc);
                         $stmtDoc->bindParam(':idPro', $projetId);
                         $stmtDoc->bindParam(':libDoc', $libDoc);
-                        $stmtDoc->bindParam(':cheminAcces', $filePath);
+                        $stmtDoc->bindParam(':cheminAcces', $filePathDB);
                         $stmtDoc->bindParam(':idExterne', $projetId);
                         $stmtDoc->execute();
                     }
