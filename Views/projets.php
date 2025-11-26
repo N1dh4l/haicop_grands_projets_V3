@@ -296,9 +296,9 @@ $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
             WHEN p.etat = 3 THEN 'عدم الموافقة'
             ELSE 'غير معروف'
         END as etatLib,
-        (SELECT libDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarah,
         (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-        (SELECT libDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrir,
+        (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
+        (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
         (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
         FROM projet p
         LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
@@ -747,7 +747,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                 <th>الوزارة</th>
                                 <th>المؤسسة</th>
                                 <th>تاريخ الوصول</th>
-                                <th>الكلفة (د.ت)</th>
+                                <th>الكلفة (م.د.ت)</th>
                                 <th>الحالة</th>
                                 <th>المستخدم</th>
                                 <th>المقترح</th>
@@ -758,7 +758,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                         <tbody>
                             <?php foreach ($projets as $projet): ?>
                                 <tr>
-                                    <td style="text-align: right;"><?php echo htmlspecialchars(substr($projet['sujet'], 0, 200)); ?></td>
+                                    <td style="text-align: right;"><?php echo htmlspecialchars(substr($projet['sujet'], 0, 300)); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libMinistere']); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libEtablissement']); ?></td>
                                     <td><?php echo date('Y/m/d', strtotime($projet['dateArrive'])); ?></td>
@@ -779,22 +779,20 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                     <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
                                     <td>
                                         <?php if ($projet['docMuqtarahId']): ?>
-                                            <a href="view_document.php?id=<?php echo $projet['docMuqtarahId']; ?>" 
-                                               target="_blank" style="color: #4caf50; text-decoration: none;">
-                                                📄 <?php echo htmlspecialchars(substr($projet['docMuqtarah'], 0, 20)); ?>
+                                            <a href="<?php echo $projet['cheminAccesMuqtarah'];?>" target="_blank">
+                                               عرض
                                             </a>
                                         <?php else: ?>
                                             <span style="color: #999;">-</span>
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <?php if ($projet['docTaqrirId']): ?>
-                                            <a href="view_document.php?id=<?php echo $projet['docTaqrirId']; ?>" 
-                                               target="_blank" style="color: #ff9800; text-decoration: none;">
-                                                📊 <?php echo htmlspecialchars(substr($projet['docTaqrir'], 0, 20)); ?>
+                                        <?php if ($projet['docMuqtarahId']): ?>
+                                            <a href="<?php echo $projet['cheminAccesTaqrir'];?>" target="_blank">
+                                               عرض
                                             </a>
                                         <?php else: ?>
-                                            <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
+                                            <?php if (Permissions::canEditProjet( $projet['idUser'])): ?>
                                                 <button onclick="openTaqrirModal(<?php echo $projet['idPro']; ?>)" 
                                                         style="background: #ff9800; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
                                                     ➕ إضافة
