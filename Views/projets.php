@@ -82,7 +82,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
         
         // 6. Validation de la taille du fichier (5MB max)
-        $maxFileSize = 5 * 1024 * 1024; // 5MB en bytes
+        $maxFileSize = 10 * 1024 * 1024; // 5MB en bytes
         if ($_FILES['fichier_taqrir']['size'] > $maxFileSize) {
             echo json_encode(['success' => false, 'message' => 'حجم الملف يجب أن يكون أقل من 5 ميغابايت'], JSON_UNESCAPED_UNICODE);
             exit();
@@ -148,11 +148,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 $stmtDoc->execute();
             }
             
-            // 12. Logger l'action
+            // 12. Mettre à jour l'état du projet à 1 (الإحالة على اللجنة)
+            $sqlUpdateEtat = "UPDATE projet SET etat = 1 WHERE idPro = :projetId";
+            $stmtUpdateEtat = $db->prepare($sqlUpdateEtat);
+            $stmtUpdateEtat->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+            $stmtUpdateEtat->execute();
+            
+            // 13. Logger l'action
             $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
             $logStmt = $db->prepare($logSql);
             $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId . ": " . $libDoc;
+            $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId . ": " . $libDoc . " - تغيير الحالة إلى الإحالة على اللجنة";
             $logStmt->bindParam(':action', $action);
             $logStmt->execute();
             
@@ -184,7 +190,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// Vérifier la permission de création
 if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
     echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لإضافة مقترحات']);
     exit();
@@ -283,73 +288,240 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     exit();
 }
 
-// Récupération des projets
-$searchQuery = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
-$filterEtat = isset($_GET['etat']) ? Security::sanitizeInput($_GET['etat']) : '';
-$filterMinistere = isset($_GET['ministere']) ? Security::sanitizeInput($_GET['ministere']) : '';
+    // Récupération des projets
+    $searchQuery = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
+    $filterEtat = isset($_GET['etat']) ? Security::sanitizeInput($_GET['etat']) : '';
+    $filterMinistere = isset($_GET['ministere']) ? Security::sanitizeInput($_GET['ministere']) : '';
 
-$sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
-        CASE 
-            WHEN p.etat = 0 THEN 'بصدد الدرس'
-            WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-            WHEN p.etat = 2 THEN 'الموافقة'
-            WHEN p.etat = 3 THEN 'عدم الموافقة'
-            ELSE 'غير معروف'
-        END as etatLib,
-        (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-        (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
-        (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
-        (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
+    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
+            CASE 
+                WHEN p.etat = 0 THEN 'بصدد الدرس'
+                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
+                WHEN p.etat = 2 THEN 'الموافقة'
+                WHEN p.etat = 3 THEN 'عدم الموافقة'
+                ELSE 'غير معروف'
+            END as etatLib,
+            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
+            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
+            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
+            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
+            FROM projet p
+            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
+            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
+            LEFT JOIN user u ON p.idUser = u.idUser
+            WHERE 1=1";
+
+    // Filtre selon le rôle
+   $filterYear = isset($_GET['year']) ? Security::sanitizeInput($_GET['year']) : '';
+
+    // Récupérer les années disponibles des projets
+    $sqlYears = "SELECT DISTINCT YEAR(dateArrive) as year 
+                FROM projet 
+                WHERE dateArrive IS NOT NULL 
+                ORDER BY year DESC";
+    $stmtYears = $db->prepare($sqlYears);
+    $stmtYears->execute();
+    $years = $stmtYears->fetchAll(PDO::FETCH_ASSOC);
+
+    if (!empty($searchQuery)) {
+        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
+    }
+    if (!empty($filterEtat)) {
+        $sql .= " AND p.etat = :etat";
+    }
+    if (!empty($filterMinistere)) {
+        $sqlCount .= " AND p.idMinistere = :ministere";
+    }
+    
+    if (!empty($filterYear)) {
+        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
+    }
+    if (!empty($filterYear)) {
+        $sql .= " AND YEAR(p.dateArrive) = :year";
+    }
+    // PUIS dans les bindParam (pour COUNT):
+    if (!empty($filterYear)) {
+        $stmtCount->bindParam(':year', $filterYear);
+    }
+
+    // ET pour la requête principale:
+    if (!empty($filterYear)) {
+        $stmt->bindParam(':year', $filterYear);
+    }
+
+    $sql .= " ORDER BY p.dateCreation DESC";
+    $stmt = $db->prepare($sql);
+
+    if (!empty($searchQuery)) {
+        $searchParam = "%{$searchQuery}%";
+        $stmt->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterEtat)) {
+        $stmt->bindParam(':etat', $filterEtat);
+    }
+    if (!empty($filterMinistere)) {
+        $stmt->bindParam(':ministere', $filterMinistere);
+    }
+
+    $stmt->execute();
+    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Liste des ministères
+    $sqlMin = "SELECT idMinistere, libMinistere FROM ministere ORDER BY libMinistere";
+    $stmtMin = $db->prepare($sqlMin);
+    $stmtMin->execute();
+    $ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
+
+    // Liste des rapporteurs (Admin et Rapporteur uniquement)
+    $sqlRapp = "SELECT idUser, nomUser FROM user WHERE typeCpt IN (2, 3) ORDER BY nomUser";
+    $stmtRapp = $db->prepare($sqlRapp);
+    $stmtRapp->execute();
+    $rapporteurs = $stmtRapp->fetchAll(PDO::FETCH_ASSOC);
+
+    $csrf_token = Security::generateCSRFToken();
+    $page_title = "قائمة المقترحات - نظام إدارة المشاريع";
+    // Nombre d'éléments par page
+    $itemsPerPage = 10;
+
+    // Page actuelle (par défaut 1)
+    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+
+    // Calculer l'offset
+    $offset = ($currentPage - 1) * $itemsPerPage;
+
+    // ==========================================
+    // COMPTER LE NOMBRE TOTAL DE PROJETS (pour la pagination)
+    // ==========================================
+    $sqlCount = "SELECT COUNT(*) as total
         FROM projet p
         LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
         LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
         LEFT JOIN user u ON p.idUser = u.idUser
         WHERE 1=1";
 
-// Filtre selon le rôle
-$sql .= Permissions::getProjectsWhereClause();
+    // Ajouter les mêmes filtres que pour la requête principale
+    $sqlCount .= Permissions::getProjectsWhereClause();
 
-if (!empty($searchQuery)) {
-    $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-}
-if (!empty($filterEtat)) {
-    $sql .= " AND p.etat = :etat";
-}
-if (!empty($filterMinistere)) {
-    $sql .= " AND p.idMinistere = :ministere";
-}
+    if (!empty($searchQuery)) {
+    $sqlCount .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
+    }
+    if (!empty($filterEtat)) {
+        $sqlCount .= " AND p.etat = :etat";
+    }
+    if (!empty($filterMinistere)) {
+        $sqlCount .= " AND p.idMinistere = :ministere";
+    }
+    if (!empty($filterYear)) {
+        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
+    }
 
-$sql .= " ORDER BY p.dateCreation DESC";
-$stmt = $db->prepare($sql);
+    $stmtCount = $db->prepare($sqlCount);
 
-if (!empty($searchQuery)) {
-    $searchParam = "%{$searchQuery}%";
-    $stmt->bindParam(':search', $searchParam);
-}
-if (!empty($filterEtat)) {
-    $stmt->bindParam(':etat', $filterEtat);
-}
-if (!empty($filterMinistere)) {
-    $stmt->bindParam(':ministere', $filterMinistere);
-}
+    if (!empty($searchQuery)) {
+        $searchParam = "%{$searchQuery}%";
+        $stmtCount->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterEtat)) {
+        $stmtCount->bindParam(':etat', $filterEtat);
+    }
+    if (!empty($filterMinistere)) {
+        $stmtCount->bindParam(':ministere', $filterMinistere);
+    }
 
-$stmt->execute();
-$projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmtCount->execute();
+    $totalItems = $stmtCount->fetch(PDO::FETCH_ASSOC)['total'];
+    $totalPages = ceil($totalItems / $itemsPerPage);
 
-// Liste des ministères
-$sqlMin = "SELECT idMinistere, libMinistere FROM ministere ORDER BY libMinistere";
-$stmtMin = $db->prepare($sqlMin);
-$stmtMin->execute();
-$ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
+    // Requête principale (reste identique mais avec le filtre année)
+    // ...
+    if (!empty($filterYear)) {
+        $sql .= " AND YEAR(p.dateArrive) = :year";
+    }
+    // ...
+    if (!empty($filterYear)) {
+        $stmt->bindParam(':year', $filterYear);
+    }
 
-// Liste des rapporteurs (Admin et Rapporteur uniquement)
-$sqlRapp = "SELECT idUser, nomUser FROM user WHERE typeCpt IN (2, 3) ORDER BY nomUser";
-$stmtRapp = $db->prepare($sqlRapp);
-$stmtRapp->execute();
-$rapporteurs = $stmtRapp->fetchAll(PDO::FETCH_ASSOC);
+    // ==========================================
+    // REQUÊTE PRINCIPALE AVEC LIMIT
+    // ==========================================
+    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
+            CASE 
+                WHEN p.etat = 0 THEN 'بصدد الدرس'
+                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
+                WHEN p.etat = 2 THEN 'الموافقة'
+                WHEN p.etat = 3 THEN 'عدم الموافقة'
+                ELSE 'غير معروف'
+            END as etatLib,
+            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
+            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
+            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
+            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
+            FROM projet p
+            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
+            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
+            LEFT JOIN user u ON p.idUser = u.idUser
+            WHERE 1=1";
 
-$csrf_token = Security::generateCSRFToken();
-$page_title = "قائمة المقترحات - نظام إدارة المشاريع";
+    $sql .= Permissions::getProjectsWhereClause();
+
+    if (!empty($searchQuery)) {
+        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
+    }
+    if (!empty($filterEtat)) {
+        $sql .= " AND p.etat = :etat";
+    }
+    
+    if (!empty($filterMinistere)) {
+        $sql .= " AND p.idMinistere = :ministere";
+    }
+
+    $sql .= " ORDER BY p.dateCreation DESC LIMIT :limit OFFSET :offset";
+
+    $stmt = $db->prepare($sql);
+
+    if (!empty($searchQuery)) {
+        $searchParam = "%{$searchQuery}%";
+        $stmt->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterEtat)) {
+        $stmt->bindParam(':etat', $filterEtat);
+    }
+    if (!empty($filterMinistere)) {
+        $stmt->bindParam(':ministere', $filterMinistere);
+    }
+
+    $stmt->bindParam(':limit', $itemsPerPage, PDO::PARAM_INT);
+    $stmt->bindParam(':offset', $offset, PDO::PARAM_INT);
+
+    $stmt->execute();
+    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+
+    // ==========================================
+    // FONCTION POUR CONSTRUIRE L'URL DE PAGINATION
+    // ==========================================
+    function buildPaginationUrl($page) {
+        $params = $_GET;
+        $params['page'] = $page;
+        return 'projets.php?' . http_build_query($params);
+    }
+    
+    // Nombre d'éléments par page
+    if (isset($_GET['items_per_page']) && $_GET['items_per_page'] === 'all') {
+        // Si "الكل" est sélectionné, afficher tous les résultats
+        $itemsPerPage = 999999; // Un grand nombre
+        $showAll = true;
+    } else {
+        $itemsPerPage = isset($_GET['items_per_page']) ? min(100, max(10, intval($_GET['items_per_page']))) : 10;
+        $showAll = false;
+    }
+
+    // Page actuelle (par défaut 1)
+    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
+
+    // Calculer l'offset
+    $offset = ($currentPage - 1) * $itemsPerPage;
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -390,9 +562,12 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
         }
         .filters-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Ajusté pour 5 colonnes */
             gap: 20px;
             margin-bottom: 20px;
+        }
+        .filter-group {
+            position: relative;
         }
         .filter-group label {
             display: block;
@@ -407,11 +582,13 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             border-radius: 8px;
             font-size: 14px;
         }
+
         .filter-actions {
             display: flex;
             gap: 15px;
             justify-content: flex-end;
         }
+        
         .btn {
             padding: 12px 30px;
             border: none;
@@ -630,73 +807,102 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                 grid-template-columns: 1fr;
             }
         }
+        .pagination-container {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 30px;
+            padding: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
+        }
+
+        .pagination-info {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .pagination {
+            display: flex;
+            gap: 8px;
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .pagination li {
+            display: inline-block;
+        }
+
+        .pagination a,
+        .pagination span {
+            display: inline-block;
+            padding: 10px 16px;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #333;
+            background: #f5f7fa;
+            transition: all 0.3s;
+            font-weight: 500;
+            min-width: 44px;
+            text-align: center;
+        }
+
+        .pagination a:hover {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            transform: translateY(-2px);
+        }
+
+        .pagination .active span {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+
+        .pagination .disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        .pagination .dots {
+            padding: 10px 8px;
+            background: transparent;
+            color: #999;
+        }
+
+        @media (max-width: 768px) {
+            .pagination-container {
+                flex-direction: column;
+                gap: 15px;
+            }
+            
+            .pagination {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+        }
+        
     </style>
 </head>
 <body>
-    <header class="main-header">
-        <div class="container">
-            <div class="header-content">
-                <div class="logo">
-                    <h1>الجمهورية التونسية</h1>
-                    <h3>رئاسة الحكومة</h3>
-                    <p>لجنة المشاريع الكبري</p>
-                </div>
-                <nav class="main-nav">
-                    <ul>
-                        <li><a href="accueil.php">الرئيسية</a></li>
-                        <li><a href="projets.php" style="color: #ffd700;">المقترحات</a></li>
-                        <li><a href="commissions.php">الجلسات</a></li>
-                        <li><a href="appels_offres.php">الصفقات</a></li>
-                        <li><a href="statistiques.php">الإحصائيات</a></li>
-                        <li><a href="administration.php">الإدارة</a></li>
-                    </ul>
-                </nav>
-                <div class="user-menu">
-                    <span class="user-name"><?php echo htmlspecialchars($_SESSION['user_name']); ?></span>
-                    <a href="../logout.php" class="btn-logout">تسجيل الخروج</a>
-                </div>
-            </div>
-        </div>
-    </header>
-
+    
+    <?php include 'includes/header.php'; ?>
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
             <h2 class="section-title">قائمة المقترحات</h2>
-            
-            <div class="stats-summary">
-                <div class="stat-box">
-                    <div class="number" style="color: #ffc107;">
-                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 0; })); ?>
-                    </div>
-                    <div class="label">بصدد الدرس</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number" style="color: #17a2b8;">
-                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 1; })); ?>
-                    </div>
-                    <div class="label">الإحالة على اللجنة</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number" style="color: #4caf50;">
-                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 2; })); ?>
-                    </div>
-                    <div class="label">الموافقة</div>
-                </div>
-                <div class="stat-box">
-                    <div class="number" style="color: #dc3545;">
-                        <?php echo count(array_filter($projets, function($p) { return $p['etat'] == 3; })); ?>
-                    </div>
-                    <div class="label">عدم الموافقة</div>
-                </div>
-            </div>
-            
-            <div class="filters-section">
+             <div class="filters-section">
                 <form method="GET">
                     <div class="filters-grid">
+                        <!-- Recherche -->
                         <div class="filter-group">
                             <label>البحث</label>
                             <input type="text" name="search" placeholder="ابحث عن مقترح..." value="<?php echo htmlspecialchars($searchQuery); ?>">
                         </div>
+                        
+                        <!-- الوزارة -->
                         <div class="filter-group">
                             <label>الوزارة</label>
                             <select name="ministere">
@@ -709,13 +915,17 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                 <?php endforeach; ?>
                             </select>
                         </div>
+                        
+                        <!-- المؤسسات -->
                         <div class="filter-group">
-                            <label>الموسسات</label>
+                            <label>المؤسسات</label>
                             <select name="ministere">
                                 <option value="">جميع المؤسسات</option>
                                 <option value=""> </option>
                             </select>
                         </div>
+                        
+                        <!-- الحالة -->
                         <div class="filter-group">
                             <label>الحالة</label>
                             <select name="etat">
@@ -727,7 +937,21 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                             </select>
                         </div>
                         
+                        <!-- ✨ NOUVEAU: السنة -->
+                        <div class="filter-group">
+                            <label>السنة</label>
+                            <select name="year">
+                                <option value="">جميع السنوات</option>
+                                <?php foreach ($years as $year): ?>
+                                    <option value="<?php echo $year['year']; ?>" 
+                                            <?php echo $filterYear == $year['year'] ? 'selected' : ''; ?>>
+                                        <?php echo $year['year']; ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
                     </div>
+                    
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
                         <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
@@ -737,7 +961,6 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                     </div>
                 </form>
             </div>
-            
             <div class="projects-table">
                 <?php if (count($projets) > 0): ?>
                     <table>
@@ -779,26 +1002,40 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                     <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
                                     <td>
                                         <?php if ($projet['docMuqtarahId']): ?>
-                                            <a href="<?php echo $projet['cheminAccesMuqtarah'];?>" target="_blank">
+                                            <a href="<?php echo $projet['cheminAccesMuqtarah'];?>" target="_blank" class="btn-action"
+                                                style="background: #bdc0bdff; color: white; padding: 6px 10px; border-radius: 6px; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
                                                عرض
                                             </a>
                                         <?php else: ?>
                                             <span style="color: #999;">-</span>
                                         <?php endif; ?>
                                     </td>
-                                    <td>
-                                        <?php if ($projet['docMuqtarahId']): ?>
-                                            <a href="<?php echo $projet['cheminAccesTaqrir'];?>" target="_blank">
-                                               عرض
-                                            </a>
+                                    
+                                    <td style="text-align: center;">
+                                        <?php if (!empty($projet['cheminAccesTaqrir']) && $projet['docTaqrirId']): ?>
+                                            <!-- Document existe: Boutons Voir + Modifier -->
+                                            <div style="display: flex; gap: 5px; justify-content: center; align-items: center;">
+                                                <a href="<?php echo htmlspecialchars($projet['cheminAccesTaqrir']); ?>" 
+                                                target="_blank"
+                                                class="btn-action"
+                                                style="background: #bdc0bdff; color: white; padding: 6px 10px; border-radius: 6px; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;"
+                                                title="عرض التقرير الرقابي">
+                                                    <span>عرض</span>
+                                                </a>
+                                            </div>
                                         <?php else: ?>
-                                            <?php if (Permissions::canEditProjet( $projet['idUser'])): ?>
+                                            <!-- Document n'existe pas: Bouton Ajouter -->
+                                            <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
                                                 <button onclick="openTaqrirModal(<?php echo $projet['idPro']; ?>)" 
-                                                        style="background: #ff9800; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">
-                                                    ➕ إضافة
+                                                        class="btn-action"
+                                                        style="background: linear-gradient(135deg, #ff9800 0%, #f57c00 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(255,152,0,0.3); transition: all 0.3s; display: inline-flex; align-items: center; gap: 6px;"
+                                                        onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(255,152,0,0.4)'"
+                                                        onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(255,152,0,0.3)'"
+                                                        title="إضافة التقرير الرقابي">
+                                                    <span>إضافة</span>
                                                 </button>
                                             <?php else: ?>
-                                                <span style="color: #999;">-</span>
+                                                <span style="color: #999; font-size: 14px;">لا يوجد</span>
                                             <?php endif; ?>
                                         <?php endif; ?>
                                     </td>
@@ -807,8 +1044,9 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                             <a href="modifier_projet.php?id=<?php echo $projet['idPro']; ?>" class="btn-action btn-edit">تعديل</a>
                                         <?php endif; ?>
                                         <?php if (Permissions::canDeleteProjet($projet['idUser'])): ?>
-                                            <a href="#" class="btn-action btn-delete" 
-                                               onclick="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">حذف</a>
+                                            <button onclick="confirmDelete(<?php echo $projet['idPro']; ?>)" class="btn-action btn-delete">
+                                                حذف
+                                            </button>
                                         <?php endif; ?>
                                     </td>
                                 </tr>
@@ -819,6 +1057,80 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                     <p style="text-align: center; padding: 40px; color: #666;">لا توجد مقترحات</p>
                 <?php endif; ?>
             </div>
+            <?php if ($totalPages > 1): ?>
+                <div class="pagination-container">
+                    <div class="pagination-info">
+                        عرض <?php echo (($currentPage - 1) * $itemsPerPage) + 1; ?> - 
+                        <?php echo min($currentPage * $itemsPerPage, $totalItems); ?> 
+                        من أصل <?php echo $totalItems; ?> مقترح
+                    </div>
+                    
+                    <ul class="pagination">
+                        <!-- Bouton Précédent -->
+                        <li class="<?php echo $currentPage <= 1 ? 'disabled' : ''; ?>">
+                            <?php if ($currentPage > 1): ?>
+                                <a href="<?php echo buildPaginationUrl($currentPage - 1); ?>">« السابق</a>
+                            <?php else: ?>
+                                <span>« السابق</span>
+                            <?php endif; ?>
+                        </li>
+                        
+                        <?php
+                        // Logique d'affichage des numéros de page
+                        $range = 2; // Nombre de pages à afficher de chaque côté
+                        
+                        // Première page
+                        if ($currentPage > $range + 1) {
+                            echo '<li><a href="' . buildPaginationUrl(1) . '">1</a></li>';
+                            if ($currentPage > $range + 2) {
+                                echo '<li><span class="dots">...</span></li>';
+                            }
+                        }
+                        
+                        // Pages autour de la page actuelle
+                        for ($i = max(1, $currentPage - $range); $i <= min($totalPages, $currentPage + $range); $i++) {
+                            if ($i == $currentPage) {
+                                echo '<li class="active"><span>' . $i . '</span></li>';
+                            } else {
+                                echo '<li><a href="' . buildPaginationUrl($i) . '">' . $i . '</a></li>';
+                            }
+                        }
+                        
+                        // Dernière page
+                        if ($currentPage < $totalPages - $range) {
+                            if ($currentPage < $totalPages - $range - 1) {
+                                echo '<li><span class="dots">...</span></li>';
+                            }
+                            echo '<li><a href="' . buildPaginationUrl($totalPages) . '">' . $totalPages . '</a></li>';
+                        }
+                        ?>
+                        
+                        <!-- Bouton Suivant -->
+                        <li class="<?php echo $currentPage >= $totalPages ? 'disabled' : ''; ?>">
+                            <?php if ($currentPage < $totalPages): ?>
+                                <a href="<?php echo buildPaginationUrl($currentPage + 1); ?>">التالي »</a>
+                            <?php else: ?>
+                                <span>التالي »</span>
+                            <?php endif; ?>
+                        </li>
+                    </ul>
+                </div>
+                <?php endif; ?>
+
+                <!-- ==========================================
+                    OPTION: Sélecteur du nombre d'éléments par page
+                    ========================================== -->
+                <!-- REMPLACER toute la section "items-per-page" par: -->
+                <div class="items-per-page" style="margin-top: 15px; text-align: center;">
+                    <label style="color: #666; font-size: 14px; margin-left: 10px;">عدد المقترحات في الصفحة:</label>
+                    <select id="itemsPerPageSelect" style="padding: 8px 12px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
+                        <option value="all">الكل</option>
+                        <option value="10" <?php echo (!isset($_GET['items_per_page']) || $_GET['items_per_page'] == 10) ? 'selected' : ''; ?>>10</option>
+                        <option value="25" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 25) ? 'selected' : ''; ?>>25</option>
+                        <option value="50" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 50) ? 'selected' : ''; ?>>50</option>
+                        <option value="100" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 100) ? 'selected' : ''; ?>>100</option>
+                    </select>
+                </div>
         </div>
     </section>
 
@@ -974,7 +1286,40 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
             </div>
         </div>
     </div>
-
+    <!-- MODAL DE CONFIRMATION DE SUPPRESSION -->
+    <div id="deleteModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header" style="background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);">
+                <h2>⚠️ تأكيد الحذف</h2>
+                <span class="close" id="btnCloseDelete">&times;</span>
+            </div>
+            <div class="modal-body">
+                <div id="deleteAlert"></div>
+                
+                <p style="text-align: center; font-size: 18px; color: #333; margin: 30px 0;">
+                    هل أنت متأكد من حذف هذا المقترح؟
+                </p>
+                <p style="text-align: center; font-size: 14px; color: #dc3545; margin-bottom: 30px;">
+                    ⚠️ هذا الإجراء لا يمكن التراجع عنه!
+                </p>
+                
+                <form id="deleteForm">
+                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
+                    <input type="hidden" name="action" value="delete_projet">
+                    <input type="hidden" name="projetId" id="deleteProjetId">
+                    
+                    <div class="modal-footer">
+                        <button type="submit" class="btn btn-danger" style="background: #dc3545;">
+                            ✓ نعم، احذف
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="btnCancelDelete">
+                            ✕ إلغاء
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>                                
     <?php include 'includes/footer.php'; ?>
 
     <script>
@@ -1051,7 +1396,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                    'application/vnd.ms-excel',
                                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
-                if (fileSize > 5) {
+                if (fileSize > 10) {
                     alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
                     this.value = '';
                     return false;
@@ -1141,7 +1486,7 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                                    'application/vnd.ms-excel',
                                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
-                if (fileSize > 5) {
+                if (fileSize > 10) {
                     alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
                     this.value = '';
                     return false;
@@ -1184,6 +1529,92 @@ $page_title = "قائمة المقترحات - نظام إدارة المشار�
                 alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
             });
         };
+        // REMPLACER la fonction de changement d'éléments par page:
+        document.getElementById('itemsPerPageSelect')?.addEventListener('change', function() {
+            var params = new URLSearchParams(window.location.search);
+            
+            if (this.value === 'all') {
+                params.set('items_per_page', 'all');
+            } else {
+                params.set('items_per_page', this.value);
+            }
+            
+            params.delete('page'); // Revenir à la première page
+            window.location.href = 'projets.php?' + params.toString();
+        });
+
+        // Variables pour le modal de suppression
+        var deleteModal = document.getElementById('deleteModal');
+        var btnCloseDelete = document.getElementById('btnCloseDelete');
+        var btnCancelDelete = document.getElementById('btnCancelDelete');
+
+        // Fonction pour ouvrir le modal de confirmation de suppression
+        function confirmDelete(projetId) {
+            document.getElementById('deleteProjetId').value = projetId;
+            deleteModal.classList.add('show');
+            document.body.style.overflow = 'hidden';
+        }
+
+        // Fonction pour fermer le modal de suppression
+        function closeDeleteModal() {
+            deleteModal.classList.remove('show');
+            document.body.style.overflow = 'auto';
+            document.getElementById('deleteForm').reset();
+            document.getElementById('deleteAlert').innerHTML = '';
+        }
+
+        if (btnCloseDelete) {
+            btnCloseDelete.onclick = closeDeleteModal;
+        }
+
+        if (btnCancelDelete) {
+            btnCancelDelete.onclick = closeDeleteModal;
+        }
+
+        // Soumettre le formulaire de suppression
+        document.getElementById('deleteForm').onsubmit = function(e) {
+            e.preventDefault();
+            
+            var formData = new FormData(this);
+            var alertDiv = document.getElementById('deleteAlert');
+            
+            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #dc3545; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الحذف...</p></div>';
+            
+            fetch('delete_projet.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
+                    setTimeout(function() {
+                        window.location.reload();
+                    }, 1500);
+                } else {
+                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                }
+            })
+            .catch(function(error) {
+                    console.error('Error:', error);
+                    alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
+                });
+            };
+
+            // Mise à jour de la fonction window.onclick pour inclure le modal de suppression
+            var originalWindowClick = window.onclick;
+            window.onclick = function(event) {
+                if (event.target == modal) {
+                    fermerModal();
+                }
+                if (event.target == taqrirModal) {
+                    closeTaqrirModal();
+                }
+                if (event.target == deleteModal) {
+                    closeDeleteModal();
+                }
+            }
+        
     </script>
 </body>
 </html>

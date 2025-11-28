@@ -3,23 +3,23 @@
     require_once '../Config/Security.php';
     require_once '../Models/Dashboard.php';
 
-Security::startSecureSession();
-Security::requireLogin();
+        Security::startSecureSession();
+        Security::requireLogin();
 
-// Timeout session (30 minutes)
-if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
-    Security::logout();
-}
-$_SESSION['last_activity'] = time();
+        // Timeout session (30 minutes)
+        if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
+            Security::logout();
+        }
+        $_SESSION['last_activity'] = time();
 
-$database = new Database();
-$db = $database->getConnection();
-$dashboard = new Dashboard($db);
+        $database = new Database();
+        $db = $database->getConnection();
+        $dashboard = new Dashboard($db);
 
-$stats = $dashboard->getStats();
-$commission_data = $dashboard->getCommissionProjects();
+        $stats = $dashboard->getStats();
+        $commission_data = $dashboard->getCommissionProjects();
 
-$page_title = "لوحة التحكم - نظام إدارة المشاريع";
+        $page_title = "لوحة التحكم - نظام إدارة المشاريع";
 ?>
 
 <!DOCTYPE html>
@@ -29,34 +29,63 @@ $page_title = "لوحة التحكم - نظام إدارة المشاريع";
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title><?php echo $page_title; ?></title>
     <link rel="stylesheet" href="../assets/css/style.css">
+    <style>
+        .admin-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .admin-header h2 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .admin-header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .submenu {
+            position: relative;
+            display: inline-block;
+        }
+        
+        .submenu-content {
+            display: none;
+            position: absolute;
+            background-color: white;
+            min-width: 200px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            border-radius: 8px;
+            z-index: 1;
+            top: 100%;
+            right: 0;
+            margin-top: 5px;
+        }
+        
+        .submenu:hover .submenu-content {
+            display: block;
+        }
+        
+        .submenu-content a {
+            color: #333;
+            padding: 12px 16px;
+            text-decoration: none;
+            display: block;
+            transition: background 0.3s;
+        }
+        
+        .submenu-content a:hover {
+            background-color: #f1f1f1;
+        }
+    </style>
 </head>
 <body>
     <!-- Header -->
-    <header class="main-header">
-        <div class="container">
-            <div class="header-content">
-                <div class="logo">
-                    <h1>الجمهورية التونسية</h1>
-                    <h3>رئاسة الحكومة</h3>
-                    <p>لجنة المشاريع الكبري</p>
-                </div>
-                <nav class="main-nav">
-                    <ul>
-                        <li><a href="accueil.php">الرئيسية</a></li>
-                        <li><a href="projets.php">المقترحات</a></li>
-                        <li><a href="commissions.php">الجلسات</a></li>
-                        <li><a href="appels_offres.php">الصفقات</a></li>
-                        <li><a href="statistiques.php">الإحصائيات</a></li>
-                        <li><a href="administration.php">الإدارة</a></li>
-                    </ul>
-                </nav>
-                <div class="user-menu">
-                    <span class="user-name"><?php echo htmlspecialchars($_SESSION['user_name']); ?></span>
-                    <a href="../logout.php" class="btn-logout">تسجيل الخروج</a>
-                </div>
-            </div>
-        </div>
-    </header>
+    <?php include 'includes/header.php'; ?>
 
     <!-- Hero Section with Stats -->
     <section class="hero-section">

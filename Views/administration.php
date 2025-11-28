@@ -398,38 +398,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
     </style>
 </head>
 <body>
-    <header class="main-header">
-        <div class="container">
-            <div class="header-content">
-                <div class="logo">
-                    <h1>الجمهورية التونسية</h1>
-                    <h3>رئاسة الحكومة</h3>
-                    <p>لجنة المشاريع الكبري</p>
-                </div>
-                <nav class="main-nav">
-                    <ul>
-                        <li><a href="accueil.php">الرئيسية</a></li>
-                        <li><a href="projets.php">المقترحات</a></li>
-                        <li><a href="commissions.php">الجلسات</a></li>
-                        <li><a href="appels_offres.php">الصفقات</a></li>
-                        <li><a href="statistiques.php">الإحصائيات</a></li>
-                        <li class="submenu">
-                            <a href="administration.php" style="color: #ffd700;">الإدارة ▼</a>
-                            <div class="submenu-content">
-                                <a href="administration.php">📊 سجل الأنشطة</a>
-                                <a href="gestion_users.php">👥 إدارة المستخدمين</a>
-                                <a href="parametres.php">⚙️ الإعدادات</a>
-                            </div>
-                        </li>
-                    </ul>
-                </nav>
-                <div class="user-menu">
-                    <span class="user-name"><?php echo htmlspecialchars($_SESSION['user_name']); ?></span>
-                    <a href="../logout.php" class="btn-logout">تسجيل الخروج</a>
-                </div>
-            </div>
-        </div>
-    </header>
+    <?php include 'includes/header.php'; ?>
 
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
