@@ -956,7 +956,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
                         <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
                         <?php if (Permissions::canCreateProjet()): ?>
-                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة مقترح جديد</button>
+                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة مقترح</button>
                         <?php endif; ?>
                     </div>
                 </form>
