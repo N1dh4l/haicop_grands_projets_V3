@@ -31,22 +31,24 @@
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
         .admin-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
             color: white;
             padding: 40px;
             border-radius: 15px;
             margin-bottom: 30px;
             text-align: center;
+            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
         }
         
         .admin-header h2 {
             font-size: 32px;
             margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .admin-header p {
             font-size: 16px;
-            opacity: 0.9;
+            opacity: 0.95;
         }
         .submenu {
             position: relative;
@@ -58,12 +60,13 @@
             position: absolute;
             background-color: white;
             min-width: 200px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            box-shadow: 0 8px 16px rgba(255, 107, 53, 0.2);
             border-radius: 8px;
             z-index: 1;
             top: 100%;
             right: 0;
             margin-top: 5px;
+            border-top: 3px solid #FF6B35;
         }
         
         .submenu:hover .submenu-content {
@@ -79,7 +82,8 @@
         }
         
         .submenu-content a:hover {
-            background-color: #f1f1f1;
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            color: white;
         }
     </style>
 </head>

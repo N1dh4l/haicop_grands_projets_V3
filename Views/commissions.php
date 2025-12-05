@@ -1,528 +1,289 @@
 <?php
-ob_start();
-require_once '../Config/Database.php';
-require_once '../Config/Security.php';
-require_once '../Config/Permissions.php';
+    ob_start();
+    require_once '../Config/Database.php';
+    require_once '../Config/Security.php';
+    require_once '../Config/Permissions.php';
 
-Security::startSecureSession();
-Security::requireLogin();
+    Security::startSecureSession();
+    Security::requireLogin();
 
-if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
-    Security::logout();
-}
-$_SESSION['last_activity'] = time();
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
+        Security::logout();
+    }
+    $_SESSION['last_activity'] = time();
 
-// ==========================================
-// INITIALISER LA BASE DE DONNÉES ICI (AVANT TOUT)
-// ==========================================
-$database = new Database();
-$db = $database->getConnection();
+    // ==========================================
+    // INITIALISER LA BASE DE DONNÉES ICI (AVANT TOUT)
+    // ==========================================
+    $database = new Database();
+    $db = $database->getConnection();
+    $page_title= "لجنة المشاريع الكبرى - رئاسة الحكومة";
 
-// Traitement de l'upload du التقرير الرقابي
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_taqrir') {
-    // Nettoyer tout buffer de sortie
-    ob_clean();
-    header('Content-Type: application/json; charset=utf-8');
-    
-    try {
-        // 1. Validation CSRF
-        if (!Security::validateCSRFToken($_POST['csrf_token'])) {
-            echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 2. Récupération et validation des données
-        $projetId = intval($_POST['projetId']);
-        $libDoc = Security::sanitizeInput($_POST['libDoc']);
-        
-        if (empty($libDoc)) {
-            echo json_encode(['success' => false, 'message' => 'يرجى إدخال عنوان التقرير'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 3. Vérifier que le projet existe
-        $sqlCheck = "SELECT idUser FROM projet WHERE idPro = :projetId";
-        $stmtCheck = $db->prepare($sqlCheck);
-        $stmtCheck->bindParam(':projetId', $projetId, PDO::PARAM_INT);
-        $stmtCheck->execute();
-        $projetCheck = $stmtCheck->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$projetCheck) {
-            echo json_encode(['success' => false, 'message' => 'المشروع غير موجود. الرجاء التحقق من رقم المشروع'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 4. Vérifier les permissions
-        if (!Permissions::canEditProjet($projetCheck['idUser'])) {
-            echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لتعديل هذا المقترح'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 5. Vérifier le fichier uploadé
-        if (!isset($_FILES['fichier_taqrir']) || $_FILES['fichier_taqrir']['error'] !== UPLOAD_ERR_OK) {
-            $errorMsg = 'لم يتم اختيار ملف';
-            if (isset($_FILES['fichier_taqrir']['error'])) {
-                switch ($_FILES['fichier_taqrir']['error']) {
-                    case UPLOAD_ERR_INI_SIZE:
-                    case UPLOAD_ERR_FORM_SIZE:
-                        $errorMsg = 'حجم الملف كبير جداً (الحد الأقصى 5MB)';
-                        break;
-                    case UPLOAD_ERR_PARTIAL:
-                        $errorMsg = 'تم رفع الملف جزئياً فقط';
-                        break;
-                    case UPLOAD_ERR_NO_FILE:
-                        $errorMsg = 'لم يتم اختيار ملف';
-                        break;
-                    default:
-                        $errorMsg = 'حدث خطأ في رفع الملف';
-                }
-            }
-            echo json_encode(['success' => false, 'message' => $errorMsg], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 6. Validation de la taille du fichier (5MB max)
-        $maxFileSize = 10 * 1024 * 1024; // 5MB en bytes
-        if ($_FILES['fichier_taqrir']['size'] > $maxFileSize) {
-            echo json_encode(['success' => false, 'message' => 'حجم الملف يجب أن يكون أقل من 5 ميغابايت'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 7. Créer le dossier s'il n'existe pas
-        $uploadDir = dirname(__DIR__) . '/uploads/documents/';
-        if (!file_exists($uploadDir)) {
-            mkdir($uploadDir, 0777, true);
-        }
-        
-        // 8. Validation du type de fichier
-        $fileName = $_FILES['fichier_taqrir']['name'];
-        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-        $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
-        
-        if (!in_array($fileExtension, $allowedExtensions)) {
-            echo json_encode(['success' => false, 'message' => 'نوع الملف غير مقبول. استخدم PDF, Word أو Excel'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 9. Générer un nom de fichier unique
-        $newFileName = 'taqrir_' . $projetId . '_' . time() . '.' . $fileExtension;
-        $filePath = $uploadDir . $newFileName;
-        $filePathDB = '../uploads/documents/' . $newFileName;
-        
-        // 10. Déplacer le fichier uploadé
-        if (!move_uploaded_file($_FILES['fichier_taqrir']['tmp_name'], $filePath)) {
-            echo json_encode(['success' => false, 'message' => 'فشل في رفع الملف'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 11. Insertion dans la base de données
-        $db->beginTransaction();
+    // Traitement de l'ajout de commission
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_commission') {
+        ob_clean();
+        header('Content-Type: application/json; charset=utf-8');
         
         try {
-            // Vérifier s'il existe déjà un تقرير رقابي pour ce projet
-            $sqlCheckExisting = "SELECT idDoc FROM document WHERE idPro = :idPro AND type = 11";
-            $stmtCheckExisting = $db->prepare($sqlCheckExisting);
-            $stmtCheckExisting->bindParam(':idPro', $projetId, PDO::PARAM_INT);
-            $stmtCheckExisting->execute();
-            
-            if ($stmtCheckExisting->rowCount() > 0) {
-                // Mettre à jour l'existant
-                $existingDoc = $stmtCheckExisting->fetch(PDO::FETCH_ASSOC);
-                $sqlUpdate = "UPDATE document 
-                             SET libDoc = :libDoc, cheminAcces = :cheminAcces 
-                             WHERE idDoc = :idDoc";
-                $stmtUpdate = $db->prepare($sqlUpdate);
-                $stmtUpdate->bindParam(':libDoc', $libDoc);
-                $stmtUpdate->bindParam(':cheminAcces', $filePathDB);
-                $stmtUpdate->bindParam(':idDoc', $existingDoc['idDoc'], PDO::PARAM_INT);
-                $stmtUpdate->execute();
-            } else {
-                // Insérer un nouveau document type 11
-                $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                           VALUES (:idPro, :libDoc, :cheminAcces, 11, :idExterne)";
-                $stmtDoc = $db->prepare($sqlDoc);
-                $stmtDoc->bindParam(':idPro', $projetId, PDO::PARAM_INT);
-                $stmtDoc->bindParam(':libDoc', $libDoc);
-                $stmtDoc->bindParam(':cheminAcces', $filePathDB);
-                $stmtDoc->bindParam(':idExterne', $projetId, PDO::PARAM_INT);
-                $stmtDoc->execute();
+            // Validation CSRF
+            if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+                throw new Exception('Token de sécurité invalide');
             }
             
-            // 12. Mettre à jour l'état du projet à 1 (الإحالة على اللجنة)
-            $sqlUpdateEtat = "UPDATE projet SET etat = 1 WHERE idPro = :projetId";
-            $stmtUpdateEtat = $db->prepare($sqlUpdateEtat);
-            $stmtUpdateEtat->bindParam(':projetId', $projetId, PDO::PARAM_INT);
-            $stmtUpdateEtat->execute();
+            // Récupérer les données
+            $numCommission = isset($_POST['numCommission']) ? intval($_POST['numCommission']) : 0;
+            $dateCommission = isset($_POST['dateCommission']) ? $_POST['dateCommission'] : '';
+            $projets = isset($_POST['projets']) ? $_POST['projets'] : array();
+            $naturePcs = isset($_POST['naturePcs']) ? $_POST['naturePcs'] : array();
             
-            // 13. Logger l'action
-            $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
-            $logStmt = $db->prepare($logSql);
-            $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId . ": " . $libDoc . " - تغيير الحالة إلى الإحالة على اللجنة";
-            $logStmt->bindParam(':action', $action);
-            $logStmt->execute();
+            // Validation des champs obligatoires
+            if ($numCommission <= 0) {
+                throw new Exception('عدد الجلسة مطلوب');
+            }
+            if (empty($dateCommission)) {
+                throw new Exception('تاريخ الجلسة مطلوب');
+            }
+            if (empty($projets) || count($projets) == 0) {
+                throw new Exception('يجب إضافة مشروع واحد على الأقل');
+            }
             
+            // Valider chaque projet
+            foreach ($projets as $index => $idPro) {
+                if (intval($idPro) <= 0) {
+                    throw new Exception('يجب اختيار مشروع صالح في السطر ' . ($index + 1));
+                }
+                if (!isset($naturePcs[$index]) || intval($naturePcs[$index]) <= 0) {
+                    throw new Exception('يجب اختيار نوعية المقترح في السطر ' . ($index + 1));
+                }
+            }
+            
+            // Vérifier si le numéro de commission existe déjà
+            $checkQuery = "SELECT COUNT(*) as count FROM commission WHERE numCommission = :numCommission";
+            $checkStmt = $db->prepare($checkQuery);
+            $checkStmt->bindParam(':numCommission', $numCommission);
+            $checkStmt->execute();
+            $result = $checkStmt->fetch(PDO::FETCH_ASSOC);
+            
+            if ($result['count'] > 0) {
+                throw new Exception('عدد الجلسة موجود مسبقا');
+            }
+            
+            // Commencer la transaction
+            $db->beginTransaction();
+            
+            // Insérer la commission
+            $queryCommission = "INSERT INTO commission (numCommission, dateCommission) VALUES (:numCommission, :dateCommission)";
+            $stmtCommission = $db->prepare($queryCommission);
+            $stmtCommission->bindParam(':numCommission', $numCommission);
+            $stmtCommission->bindParam(':dateCommission', $dateCommission);
+            $stmtCommission->execute();
+            
+            $idCom = $db->lastInsertId();
+            
+            // Insérer chaque projet dans projetcommission
+            foreach ($projets as $index => $idPro) {
+                $naturePc = intval($naturePcs[$index]);
+                
+                $queryProjetCommission = "INSERT INTO projetcommission (idPro, idCom, naturePc) VALUES (:idPro, :idCom, :naturePc)";
+                $stmtProjetCommission = $db->prepare($queryProjetCommission);
+                $stmtProjetCommission->bindParam(':idPro', $idPro);
+                $stmtProjetCommission->bindParam(':idCom', $idCom);
+                $stmtProjetCommission->bindParam(':naturePc', $naturePc);
+                $stmtProjetCommission->execute();
+            }
+            
+            // Traiter le fichier محضر الجلسة (optionnel)
+            $uploadedFile = false;
+            
+            if (isset($_FILES['fichierMahdar']) && $_FILES['fichierMahdar']['error'] === UPLOAD_ERR_OK) {
+                $libDocMahdar = isset($_POST['libDocMahdar']) ? trim($_POST['libDocMahdar']) : '';
+                
+                if (empty($libDocMahdar)) {
+                    throw new Exception('عنوان ملف المحضر مطلوب');
+                }
+                
+                $fileTmpPath = $_FILES['fichierMahdar']['tmp_name'];
+                $fileName = $_FILES['fichierMahdar']['name'];
+                $fileSize = $_FILES['fichierMahdar']['size'];
+                $fileNameCmps = explode(".", $fileName);
+                $fileExtension = strtolower(end($fileNameCmps));
+                
+                // Extensions autorisées
+                $allowedExtensions = array('pdf', 'doc', 'docx', 'xls', 'xlsx');
+                
+                if (!in_array($fileExtension, $allowedExtensions)) {
+                    throw new Exception('نوع الملف غير مقبول للمحضر');
+                }
+                
+                if ($fileSize > 10242880) { // 5MB
+                    throw new Exception('حجم ملف المحضر يجب أن يكون أقل من 5 ميغابايت');
+                }
+                
+                // Générer un nom unique
+                $newFileName = 'mahdar_' . $idCom . '_' . time() . '.' . $fileExtension;
+                $uploadFileDir = '../uploads/commissions/';
+                
+                if (!file_exists($uploadFileDir)) {
+                    mkdir($uploadFileDir, 0755, true);
+                }
+                
+                $dest_path = $uploadFileDir . $newFileName;
+                
+                if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    // Insérer dans la table document (lié au premier projet de la commission)
+                    $firstProjetId = intval($projets[0]);
+                    $queryDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                                VALUES (:idPro, :libDoc, :cheminAcces, :type, :idExterne)";
+                    $stmtDoc = $db->prepare($queryDoc);
+                    $stmtDoc->bindParam(':idPro', $firstProjetId);
+                    $stmtDoc->bindParam(':libDoc', $libDocMahdar);
+                    $stmtDoc->bindParam(':cheminAcces', $dest_path);
+                    $type = 1; // Type pour محضر الجلسة
+                    $stmtDoc->bindParam(':type', $type);
+                    $stmtDoc->bindParam(':idExterne', $idCom);
+                    $stmtDoc->execute();
+                    
+                    $uploadedFile = true;
+                }
+            }
+            
+            // Valider la transaction
             $db->commit();
+            
+            $message = 'تمت إضافة الجلسة بنجاح مع ' . count($projets) . ' مشروع(مشاريع)';
+            if ($uploadedFile) {
+                $message .= ' ومحضر الجلسة';
+            }
             
             echo json_encode([
-                'success' => true, 
-                'message' => 'تم إضافة التقرير الرقابي بنجاح'
-            ], JSON_UNESCAPED_UNICODE);
+                'success' => true,
+                'message' => $message
+            ]);
             
-        } catch (PDOException $e) {
-            $db->rollBack();
-            // Supprimer le fichier uploadé en cas d'erreur BD
-            if (file_exists($filePath)) {
-                unlink($filePath);
+        } catch (Exception $e) {
+            if ($db->inTransaction()) {
+                $db->rollBack();
             }
-            throw $e;
+            echo json_encode([
+                'success' => false,
+                'message' => $e->getMessage()
+            ]);
         }
-        
-    } catch (Exception $e) {
-        if (isset($db) && $db->inTransaction()) {
-            $db->rollBack();
-        }
-        echo json_encode([
-            'success' => false, 
-            'message' => 'حدث خطأ: ' . $e->getMessage()
-        ], JSON_UNESCAPED_UNICODE);
+        exit;
     }
-    exit();
-}
 
-if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لإضافة مقترحات']);
-    exit();
-}
+    // Récupérer la liste des projets avec état 1 OR 21 OR 22 OR 23 pour le select
+    $queryProjets = "SELECT idPro, sujet FROM projet WHERE etat = 1 OR 21 OR 22 OR 23 ORDER BY dateCreation DESC";
+    $stmtProjets = $db->prepare($queryProjets);
+    $stmtProjets->execute();
+    $projets = $stmtProjets->fetchAll(PDO::FETCH_ASSOC);
 
-// Traitement AJAX pour l'ajout de projet
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_projet') {
-    header('Content-Type: application/json');
+    // Récupérer les filtres
+    $filterSearch = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
+    $filterYear = isset($_GET['year']) ? Security::sanitizeInput($_GET['year']) : '';
     
-    if (!Security::validateCSRFToken($_POST['csrf_token'])) {
-        echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان']);
-        exit();
-    }
-    
-    $idMinistere = Security::sanitizeInput($_POST['idMinistere']);
-    $idEtab = Security::sanitizeInput($_POST['idEtab']);
-    $sujet = Security::sanitizeInput($_POST['sujet']);
-    $dateArrive = Security::sanitizeInput($_POST['dateArrive']);
-    $procedurePro = Security::sanitizeInput($_POST['procedurePro']);
-    $cout = Security::sanitizeInput($_POST['cout']);
-    $proposition = Security::sanitizeInput($_POST['proposition']);
-    $idRapporteur = Security::sanitizeInput($_POST['idRapporteur']);
-    $libDoc = Security::sanitizeInput($_POST['libDoc']);
-    
-    if (empty($idEtab) || $idEtab === 'الوزارة') {
-        $idEtab = null;
-    }
-    
-    try {
-        $db->beginTransaction();
-        
-        $sql = "INSERT INTO projet (idMinistere, idEtab, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
-                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 0, NOW())";
-        
-        $stmt = $db->prepare($sql);
-        $stmt->bindParam(':idMinistere', $idMinistere);
-        $stmt->bindParam(':idEtab', $idEtab);
-        $stmt->bindParam(':sujet', $sujet);
-        $stmt->bindParam(':dateArrive', $dateArrive);
-        $stmt->bindParam(':procedurePro', $procedurePro);
-        $stmt->bindParam(':cout', $cout);
-        $stmt->bindParam(':proposition', $proposition);
-        $stmt->bindParam(':idRapporteur', $idRapporteur);
-        
-        if ($stmt->execute()) {
-            $projetId = $db->lastInsertId();
-            
-            // Gestion du fichier المقترح
-            if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
-                $uploadDir = dirname(__DIR__) . '/uploads/documents/';
-                
-                if (!file_exists($uploadDir)) {
-                    mkdir($uploadDir, 0777, true);
-                }
-                
-                $fileName = $_FILES['fichier']['name'];
-                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-                $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
-                
-                if (in_array($fileExtension, $allowedExtensions)) {
-                    $newFileName = 'doc_' . $projetId . '_' . time() . '.' . $fileExtension;
-                    $filePath = $uploadDir . $newFileName;
-                    $filePathDB = '../uploads/documents/' . $newFileName;
-                    
-                    if (move_uploaded_file($_FILES['fichier']['tmp_name'], $filePath)) {
-                        $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                                   VALUES (:idPro, :libDoc, :cheminAcces, 1, :idExterne)";
-                        $stmtDoc = $db->prepare($sqlDoc);
-                        $stmtDoc->bindParam(':idPro', $projetId);
-                        $stmtDoc->bindParam(':libDoc', $libDoc);
-                        $stmtDoc->bindParam(':cheminAcces', $filePathDB);
-                        $stmtDoc->bindParam(':idExterne', $projetId);
-                        $stmtDoc->execute();
-                    }
-                }
-            }
-            
-            // Log l'action
-            $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
-            $logStmt = $db->prepare($logSql);
-            $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة مقترح جديد رقم {$projetId}: " . substr($sujet, 0, 50);
-            $logStmt->bindParam(':action', $action);
-            $logStmt->execute();
-            
-            $db->commit();
-            echo json_encode(['success' => true, 'message' => 'تم إضافة المقترح بنجاح']);
-        } else {
-            $db->rollBack();
-            echo json_encode(['success' => false, 'message' => 'فشل في إضافة المقترح']);
-        }
-    } catch (PDOException $e) {
-        $db->rollBack();
-        echo json_encode(['success' => false, 'message' => 'حدث خطأ في قاعدة البيانات']);
-    }
-    exit();
-}
-
-    // Récupération des projets
-    $searchQuery = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
-    $filterEtat = isset($_GET['etat']) ? Security::sanitizeInput($_GET['etat']) : '';
-    $filterMinistere = isset($_GET['ministere']) ? Security::sanitizeInput($_GET['ministere']) : '';
-
-    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
-            CASE 
-                WHEN p.etat = 0 THEN 'بصدد الدرس'
-                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                WHEN p.etat = 2 THEN 'الموافقة'
-                WHEN p.etat = 3 THEN 'عدم الموافقة'
-                ELSE 'غير معروف'
-            END as etatLib,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
-            FROM projet p
-            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-            LEFT JOIN user u ON p.idUser = u.idUser
-            WHERE 1=1";
-
-    // Filtre selon le rôle
-   $filterYear = isset($_GET['year']) ? Security::sanitizeInput($_GET['year']) : '';
-
-    // Récupérer les années disponibles des projets
-    $sqlYears = "SELECT DISTINCT YEAR(dateArrive) as year 
-                FROM projet 
-                WHERE dateArrive IS NOT NULL 
+    // Récupérer les années disponibles
+    $sqlYears = "SELECT DISTINCT YEAR(dateCommission) as year 
+                FROM commission 
+                WHERE dateCommission IS NOT NULL 
                 ORDER BY year DESC";
     $stmtYears = $db->prepare($sqlYears);
     $stmtYears->execute();
     $years = $stmtYears->fetchAll(PDO::FETCH_ASSOC);
 
-    if (!empty($searchQuery)) {
-        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sql .= " AND p.etat = :etat";
-    }
-    if (!empty($filterMinistere)) {
-        $sqlCount .= " AND p.idMinistere = :ministere";
-    }
-    
-    if (!empty($filterYear)) {
-        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
-    }
-    if (!empty($filterYear)) {
-        $sql .= " AND YEAR(p.dateArrive) = :year";
-    }
-    // PUIS dans les bindParam (pour COUNT):
-    if (!empty($filterYear)) {
-        $stmtCount->bindParam(':year', $filterYear);
-    }
-
-    // ET pour la requête principale:
-    if (!empty($filterYear)) {
-        $stmt->bindParam(':year', $filterYear);
-    }
-
-    $sql .= " ORDER BY p.dateCreation DESC";
-    $stmt = $db->prepare($sql);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmt->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmt->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmt->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmt->execute();
-    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Liste des ministères
-    $sqlMin = "SELECT idMinistere, libMinistere FROM ministere ORDER BY libMinistere";
-    $stmtMin = $db->prepare($sqlMin);
-    $stmtMin->execute();
-    $ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
-
-    // Liste des rapporteurs (Admin et Rapporteur uniquement)
-    $sqlRapp = "SELECT idUser, nomUser FROM user WHERE typeCpt IN (2, 3) ORDER BY nomUser";
-    $stmtRapp = $db->prepare($sqlRapp);
-    $stmtRapp->execute();
-    $rapporteurs = $stmtRapp->fetchAll(PDO::FETCH_ASSOC);
-
-    $csrf_token = Security::generateCSRFToken();
-    $page_title = "قائمة المقترحات - نظام إدارة المشاريع";
-    // Nombre d'éléments par page
-    $itemsPerPage = 10;
-
-    // Page actuelle (par défaut 1)
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-
-    // Calculer l'offset
-    $offset = ($currentPage - 1) * $itemsPerPage;
-
-    // ==========================================
-    // COMPTER LE NOMBRE TOTAL DE PROJETS (pour la pagination)
-    // ==========================================
-    $sqlCount = "SELECT COUNT(*) as total
-        FROM projet p
-        LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-        LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-        LEFT JOIN user u ON p.idUser = u.idUser
-        WHERE 1=1";
-
-    // Ajouter les mêmes filtres que pour la requête principale
-    $sqlCount .= Permissions::getProjectsWhereClause();
-
-    if (!empty($searchQuery)) {
-    $sqlCount .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sqlCount .= " AND p.etat = :etat";
-    }
-    if (!empty($filterMinistere)) {
-        $sqlCount .= " AND p.idMinistere = :ministere";
-    }
-    if (!empty($filterYear)) {
-        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
-    }
-
-    $stmtCount = $db->prepare($sqlCount);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmtCount->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmtCount->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmtCount->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmtCount->execute();
-    $totalItems = $stmtCount->fetch(PDO::FETCH_ASSOC)['total'];
-    $totalPages = ceil($totalItems / $itemsPerPage);
-
-    // Requête principale (reste identique mais avec le filtre année)
-    // ...
-    if (!empty($filterYear)) {
-        $sql .= " AND YEAR(p.dateArrive) = :year";
-    }
-    // ...
-    if (!empty($filterYear)) {
-        $stmt->bindParam(':year', $filterYear);
-    }
-
-    // ==========================================
-    // REQUÊTE PRINCIPALE AVEC LIMIT
-    // ==========================================
-    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
-            CASE 
-                WHEN p.etat = 0 THEN 'بصدد الدرس'
-                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                WHEN p.etat = 2 THEN 'الموافقة'
-                WHEN p.etat = 3 THEN 'عدم الموافقة'
-                ELSE 'غير معروف'
-            END as etatLib,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
-            FROM projet p
-            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-            LEFT JOIN user u ON p.idUser = u.idUser
-            WHERE 1=1";
-
-    $sql .= Permissions::getProjectsWhereClause();
-
-    if (!empty($searchQuery)) {
-        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sql .= " AND p.etat = :etat";
-    }
-    
-    if (!empty($filterMinistere)) {
-        $sql .= " AND p.idMinistere = :ministere";
-    }
-
-    $sql .= " ORDER BY p.dateCreation DESC LIMIT :limit OFFSET :offset";
-
-    $stmt = $db->prepare($sql);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmt->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmt->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmt->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmt->bindParam(':limit', $itemsPerPage, PDO::PARAM_INT);
-    $stmt->bindParam(':offset', $offset, PDO::PARAM_INT);
-
-    $stmt->execute();
-    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-
-    // ==========================================
-    // FONCTION POUR CONSTRUIRE L'URL DE PAGINATION
-    // ==========================================
-    function buildPaginationUrl($page) {
-        $params = $_GET;
-        $params['page'] = $page;
-        return 'projets.php?' . http_build_query($params);
-    }
-    
     // Nombre d'éléments par page
     if (isset($_GET['items_per_page']) && $_GET['items_per_page'] === 'all') {
-        // Si "الكل" est sélectionné, afficher tous les résultats
-        $itemsPerPage = 999999; // Un grand nombre
+        $itemsPerPage = 999999;
         $showAll = true;
     } else {
         $itemsPerPage = isset($_GET['items_per_page']) ? min(100, max(10, intval($_GET['items_per_page']))) : 10;
         $showAll = false;
     }
 
-    // Page actuelle (par défaut 1)
     $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-
-    // Calculer l'offset
     $offset = ($currentPage - 1) * $itemsPerPage;
-?>
+
+    // Compter le nombre total de commissions
+    $sqlCount = "SELECT COUNT(DISTINCT c.idCom) as total
+                FROM commission c
+                LEFT JOIN projetcommission pc ON c.idCom = pc.idCom
+                LEFT JOIN projet p ON pc.idPro = p.idPro
+                WHERE 1=1";
+
+    if (!empty($filterSearch)) {
+        $sqlCount .= " AND (p.sujet LIKE :search OR c.numCommission LIKE :search)";
+    }
+    if (!empty($filterYear)) {
+        $sqlCount .= " AND YEAR(c.dateCommission) = :year";
+    }
+
+    $stmtCount = $db->prepare($sqlCount);
+    if (!empty($filterSearch)) {
+        $searchParam = "%{$filterSearch}%";
+        $stmtCount->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterYear)) {
+        $stmtCount->bindParam(':year', $filterYear);
+    }
+    $stmtCount->execute();
+    $totalItems = $stmtCount->fetch(PDO::FETCH_ASSOC)['total'];
+    $totalPages = ceil($totalItems / $itemsPerPage);
+
+    // Récupérer les commissions avec pagination
+    $sqlCommissions = "SELECT c.idCom, c.numCommission, c.dateCommission,
+                    GROUP_CONCAT(DISTINCT p.sujet SEPARATOR ' | ') as projets,
+                    GROUP_CONCAT(DISTINCT 
+                        CASE pc.naturePc
+                            WHEN 20 THEN 'إدراج وقتي'
+                            WHEN 21 THEN 'إدراج نهائي'
+                            WHEN 22 THEN 'إسناد وقتي'
+                            WHEN 23 THEN 'إسناد نهائي'
+                        END
+                    SEPARATOR ' | ') as natures,
+                    (SELECT cheminAcces FROM document WHERE type = 1 AND idExterne = c.idCom LIMIT 1) as mahdarPath,
+                    (SELECT idDoc FROM document WHERE type = 1 AND idExterne = c.idCom LIMIT 1) as mahdarId
+                FROM commission c
+                LEFT JOIN projetcommission pc ON c.idCom = pc.idCom
+                LEFT JOIN projet p ON pc.idPro = p.idPro
+                WHERE 1=1";
+
+    if (!empty($filterSearch)) {
+        $sqlCommissions .= " AND (p.sujet LIKE :search OR c.numCommission LIKE :search)";
+    }
+    if (!empty($filterYear)) {
+        $sqlCommissions .= " AND YEAR(c.dateCommission) = :year";
+    }
+
+    $sqlCommissions .= " GROUP BY c.idCom, c.numCommission, c.dateCommission
+                        ORDER BY c.dateCommission DESC, c.numCommission DESC
+                        LIMIT :limit OFFSET :offset";
+
+    $stmtCommissions = $db->prepare($sqlCommissions);
+    if (!empty($filterSearch)) {
+        $searchParam = "%{$filterSearch}%";
+        $stmtCommissions->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterYear)) {
+        $stmtCommissions->bindParam(':year', $filterYear);
+    }
+    $stmtCommissions->bindParam(':limit', $itemsPerPage, PDO::PARAM_INT);
+    $stmtCommissions->bindParam(':offset', $offset, PDO::PARAM_INT);
+    $stmtCommissions->execute();
+    $commissions = $stmtCommissions->fetchAll(PDO::FETCH_ASSOC);
+
+    // Fonction pour construire l'URL de pagination
+    function buildPaginationUrl($page) {
+        $params = $_GET;
+        $params['page'] = $page;
+        return 'commissions.php?' . http_build_query($params);
+    }
+
+    // Générer le token CSRF si non existant
+    if (!isset($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    $csrf_token = $_SESSION['csrf_token'];
+    ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
@@ -562,7 +323,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
         .filters-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Ajusté pour 5 colonnes */
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
         }
@@ -802,11 +563,96 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        
+        /* NOUVEAUX STYLES POUR AJOUT DYNAMIQUE */
+        .projets-section {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .projets-section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .projets-section-header h3 {
+            margin: 0;
+            color: #333;
+            font-size: 18px;
+        }
+        
+        .btn-add-projet {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-add-projet:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+        }
+        
+        #projetsContainer {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        
+        .projet-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 40px;
+            gap: 15px;
+            align-items: end;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px solid #e0e0e0;
+        }
+        
+        .btn-remove {
+            background: #dc3545;
+            color: white;
+            border: none;
+            width: 40px;
+            height: 40px;
+            border-radius: 6px;
+            font-size: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .btn-remove:hover {
+            background: #c82333;
+            transform: scale(1.1);
+        }
+        
         @media (max-width: 768px) {
             .form-grid {
                 grid-template-columns: 1fr;
             }
+            
+            .projet-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .btn-remove {
+                width: 100%;
+            }
         }
+        
         .pagination-container {
             display: flex;
             justify-content: space-between;
@@ -888,7 +734,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </style>
 </head>
 <body>
-    
     <?php include 'includes/header.php'; ?>
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
@@ -899,45 +744,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <!-- Recherche -->
                         <div class="filter-group">
                             <label>البحث</label>
-                            <input type="text" name="search" placeholder="ابحث عن مقترح..." value="<?php echo htmlspecialchars($searchQuery); ?>">
+                            <input type="text" name="search" placeholder="ابحث عن مقترح أو رقم جلسة..." value="<?php echo htmlspecialchars($filterSearch); ?>">
                         </div>
                         
-                        <!-- الوزارة -->
-                        <div class="filter-group">
-                            <label>الوزارة</label>
-                            <select name="ministere">
-                                <option value="">جميع الوزارات</option>
-                                <?php foreach ($ministeres as $min): ?>
-                                    <option value="<?php echo $min['idMinistere']; ?>" 
-                                            <?php echo $filterMinistere == $min['idMinistere'] ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($min['libMinistere']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <!-- المؤسسات -->
-                        <div class="filter-group">
-                            <label>المؤسسات</label>
-                            <select name="ministere">
-                                <option value="">جميع المؤسسات</option>
-                                <option value=""> </option>
-                            </select>
-                        </div>
-                        
-                        <!-- الحالة -->
-                        <div class="filter-group">
-                            <label>الحالة</label>
-                            <select name="etat">
-                                <option value="">جميع الحالات</option>
-                                <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
-                                <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
-                                <option value="2" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الموافقة</option>
-                                <option value="3" <?php echo $filterEtat === '3' ? 'selected' : ''; ?>>عدم الموافقة</option>
-                            </select>
-                        </div>
-                        
-                        <!-- ✨ NOUVEAU: السنة -->
+                        <!-- السنة -->
                         <div class="filter-group">
                             <label>السنة</label>
                             <select name="year">
@@ -951,20 +761,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             </select>
                         </div>
                     </div>
-                    
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
-                        <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
+                        <a href="commissions.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
                         <?php if (Permissions::canCreateProjet()): ?>
                             <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة جلسة
-                                
                             </button>
                         <?php endif; ?>
                     </div>
                 </form>
             </div>
             <div class="projects-table">
-                <?php if (count($projets) > 0): ?>
+                <?php if (count($commissions) > 0): ?>
                     <table>
                         <thead>
                             <tr>
@@ -973,37 +781,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <th>المقترحات المعروضة</th>
                                 <th>نوعية المقترح</th>
                                 <th>محضر الجلسة</th>
-                                <th>قرار اللجنة</th>
+                                <th> قرار اللجنة</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody>
-                            
+                            <?php foreach ($commissions as $commission): ?>
                                 <tr>
-                                    <td></td>
-                                    <td></td>
-                                    <td></td>
-                                    <td></td>
-                                    <td></td>
-                                    <td></td>
+                                    <td><?php echo htmlspecialchars($commission['numCommission']); ?></td>
+                                    <td><?php echo date('Y-m-d', strtotime($commission['dateCommission'])); ?></td>
+                                    <td style="text-align: right; padding: 10px;">
+                                        <?php 
+                                            $projets_list = explode(' | ', $commission['projets']);
+                                            foreach ($projets_list as $index => $projet_sujet) {
+                                                if ($index > 0) echo '<hr style="margin: 8px 0; border: none; border-top: 1px solid #e0e0e0;">';
+                                                echo '<div style="padding: 5px 0;">' . htmlspecialchars(substr($projet_sujet, 0, 300)) . '</div>';
+                                            }
+                                        ?>
+                                    </td>
                                     <td>
-                                        <a href="modifier_commission.php?id=" class="btn-action btn-edit">تعديل</a>
-                                        <a href="#" class="btn-action btn-delete" onclick="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">حذف</a>
+                                        <?php 
+                                            $natures_list = explode(' | ', $commission['natures']);
+                                            foreach ($natures_list as $nature) {
+                                                $badgeClass = '';
+                                                if (strpos($nature, 'إدراج') !== false) {
+                                                    $badgeClass = 'badge-processing';
+                                                } else if (strpos($nature, 'إسناد') !== false) {
+                                                    $badgeClass = 'badge-approved';
+                                                }
+                                                echo '<span class="badge ' . $badgeClass . '" style="display: block; margin: 3px 0;">' . htmlspecialchars($nature) . '</span>';
+                                            }
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <?php if (!empty($commission['mahdarPath']) && $commission['mahdarId']): ?>
+                                            <a href="<?php echo htmlspecialchars($commission['mahdarPath']); ?>" 
+                                               target="_blank" 
+                                               class="btn-action btn-view"
+                                               style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
+                                                👁️ عرض
+                                            </a>
+                                        <?php else: ?>
+                                            <span style="color: #999;">لا يوجد</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if (!empty($commission['mahdarPath']) && $commission['mahdarId']): ?>
+                                            <a href="<?php echo htmlspecialchars($commission['mahdarPath']); ?>" 
+                                               target="_blank" 
+                                               class="btn-action btn-view"
+                                               style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
+                                                👁️ عرض
+                                            </a>
+                                        <?php else: ?>
+                                            <span style="color: #999;">لا يوجد</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if (Permissions::canEditProjet($_SESSION['user_id'])): ?>
+                                            <a href="modifier_commission.php?id=<?php echo $commission['idCom']; ?>" 
+                                               class="btn-action btn-edit">تعديل</a>
+                                            <a href="javascript:void(0)" 
+                                               onclick="confirmDeleteCommission(<?php echo $commission['idCom']; ?>)" 
+                                               class="btn-action btn-delete">حذف</a>
+                                        <?php endif; ?>
                                     </td>
                                 </tr>
-                            
+                            <?php endforeach; ?>
                         </tbody>
                     </table>
                 <?php else: ?>
-                    <p style="text-align: center; padding: 40px; color: #666;">لا توجد مقترحات</p>
+                    <p style="text-align: center; padding: 40px; color: #666;">لا توجد جلسات</p>
                 <?php endif; ?>
             </div>
+            
             <?php if ($totalPages > 1): ?>
                 <div class="pagination-container">
                     <div class="pagination-info">
                         عرض <?php echo (($currentPage - 1) * $itemsPerPage) + 1; ?> - 
                         <?php echo min($currentPage * $itemsPerPage, $totalItems); ?> 
-                        من أصل <?php echo $totalItems; ?> مقترح
+                        من أصل <?php echo $totalItems; ?> جلسة
                     </div>
                     
                     <ul class="pagination">
@@ -1017,10 +874,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         </li>
                         
                         <?php
-                        // Logique d'affichage des numéros de page
-                        $range = 2; // Nombre de pages à afficher de chaque côté
+                        $range = 2;
                         
-                        // Première page
                         if ($currentPage > $range + 1) {
                             echo '<li><a href="' . buildPaginationUrl(1) . '">1</a></li>';
                             if ($currentPage > $range + 2) {
@@ -1028,7 +883,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             }
                         }
                         
-                        // Pages autour de la page actuelle
                         for ($i = max(1, $currentPage - $range); $i <= min($totalPages, $currentPage + $range); $i++) {
                             if ($i == $currentPage) {
                                 echo '<li class="active"><span>' . $i . '</span></li>';
@@ -1037,7 +891,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                             }
                         }
                         
-                        // Dernière page
                         if ($currentPage < $totalPages - $range) {
                             if ($currentPage < $totalPages - $range - 1) {
                                 echo '<li><span class="dots">...</span></li>';
@@ -1056,172 +909,115 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         </li>
                     </ul>
                 </div>
-                <?php endif; ?>
-
-                <!-- ==========================================
-                    OPTION: Sélecteur du nombre d'éléments par page
-                    ========================================== -->
-                <!-- REMPLACER toute la section "items-per-page" par: -->
-                <div class="items-per-page" style="margin-top: 15px; text-align: center;">
-                    <label style="color: #666; font-size: 14px; margin-left: 10px;">عدد المقترحات في الصفحة:</label>
-                    <select id="itemsPerPageSelect" style="padding: 8px 12px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
-                        <option value="all">الكل</option>
-                        <option value="10" <?php echo (!isset($_GET['items_per_page']) || $_GET['items_per_page'] == 10) ? 'selected' : ''; ?>>10</option>
-                        <option value="25" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 25) ? 'selected' : ''; ?>>25</option>
-                        <option value="50" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 50) ? 'selected' : ''; ?>>50</option>
-                        <option value="100" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 100) ? 'selected' : ''; ?>>100</option>
-                    </select>
-                </div>
+            <?php endif; ?>
+            <!-- ==========================================
+                OPTION: Sélecteur du nombre d'éléments par page
+                ========================================== -->
+            <div class="items-per-page" style="margin-top: 15px; text-align: center;">
+                <label style="color: #666; font-size: 14px; margin-left: 10px;">عدد المقترحات في الصفحة:</label>
+                <select id="itemsPerPageSelect" style="padding: 8px 12px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
+                    <option value="all">الكل</option>
+                    <option value="10" selected>10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
         </div>
     </section>
 
     <!-- MODAL -->
-    <div id="addProjetModal" class="modal">
+    <div id="addCommissionModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>➕ إضافة مقترح جديد</h2>
+                <h2>➕ إضافة جلسة</h2>
                 <span class="close" id="btnCloseModal">&times;</span>
             </div>
             <div class="modal-body">
                 <div id="modalAlert"></div>    
-                <form id="addProjetForm" enctype="multipart/form-data">
+                <form id="addCommissionForm" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                    <input type="hidden" name="action" value="add_projet">
+                    <input type="hidden" name="action" value="add_commission">
                     
                     <div class="form-grid">
-                        <!-- 1. الموضوع -->
-                        <div class="form-group form-group-full">
-                            <label>الموضوع <span class="required">*</span></label>
-                            <textarea name="sujet" class="form-control" required 
-                                      placeholder=" موضوع المقترح ..."></textarea>
-                        </div>
                         
-                        <!-- 2. الوزارة -->
+                        <!-- 1. عدد الجلسة -->
                         <div class="form-group">
-                            <label>الوزارة <span class="required">*</span></label>
-                            <select name="idMinistere" id="modalMinistere" class="form-control" required>
-                                <option value="">-- اختر الوزارة --</option>
-                                <?php foreach ($ministeres as $min): ?>
-                                    <option value="<?php echo $min['idMinistere']; ?>">
-                                        <?php echo htmlspecialchars($min['libMinistere']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
+                            <label>عدد الجلسة <span class="required">*</span></label>
+                            <input type="number" name="numCommission" class="form-control" required min="1">
+                        </div> 
                         
-                        <!-- 3. المؤسسة -->
+                        <!-- 2. تاريخ الجلسة -->
                         <div class="form-group">
-                            <label>المؤسسة <span class="required">*</span></label>
-                            <select name="idEtab" id="modalEtab" class="form-control" required>
-                                <option value="">--أختر الوزارة --</option>
-                            </select>
+                            <label>تاريخ الجلسة <span class="required">*</span></label>
+                            <input type="date" name="dateCommission" class="form-control" required 
+                                value="<?php echo date('Y-m-d'); ?>">
+                        </div>
+                    </div>
+                    
+                    <!-- NOUVELLE SECTION: المشاريع المعروضة -->
+                    <div class="projets-section">
+                        <div class="projets-section-header">
+                            <h3>المشاريع المعروضة <span class="required">*</span></h3>
+                            <button type="button" class="btn-add-projet" onclick="addProjet()">
+                                ➕ إضافة مشروع
+                            </button>
                         </div>
                         
-                        <!-- 4. تاريخ الإعلام -->
+                        <div id="projetsContainer">
+                            <!-- Premier projet (par défaut) -->
+                            <div class="projet-row" data-index="0">
+                                <div class="form-group" style="margin: 0;">
+                                    <label>المشروع <span class="required">*</span></label>
+                                    <select name="projets[]" class="form-control" required>
+                                        <option value="">-- اختر المشروع --</option>
+                                        <?php foreach ($projets as $projet): ?>
+                                            <option value="<?php echo $projet['idPro']; ?>">
+                                                <?php echo htmlspecialchars($projet['sujet']); ?>
+                                            </option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </div>
+                                
+                                <div class="form-group" style="margin: 0;">
+                                    <label>نوعية المقترح <span class="required">*</span></label>
+                                    <select name="naturePcs[]" class="form-control" required>
+                                        <option value="">-- اختر النوعية --</option>
+                                        <option value="20">إدراج وقتي</option>
+                                        <option value="21">إدراج نهائي</option>
+                                        <option value="22">إسناد وقتي</option>
+                                        <option value="23">إسناد نهائي</option>      
+                                    </select>
+                                </div>
+                                
+                                <button type="button" class="btn-remove" onclick="removeProjet(0)" style="visibility: hidden;">×</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- SECTION FICHIERS -->
+                    <div class="form-grid">
+                        <!-- 3. ملف محضر الجلسة (اختياري) -->
                         <div class="form-group">
-                            <label> تاريخ التعهد <span class="required">*</span></label>
-                            <input type="date" name="dateArrive" class="form-control" required 
-                                   value="<?php echo date('Y-m-d'); ?>">
-                        </div>
-                        
-                        <!-- 5. الإجراء -->
-                        <div class="form-group">
-                            <label>صيغة المشروع <span class="required">*</span></label>
-                            <select name="procedurePro" class="form-control" required>
-                                <option value="">-- اختر الصيغة --</option>
-                                <option value="جديد"> مشروع جديد </option>
-                                <option value="بصدد الإنجاز">بصدد الإنجاز</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 6. الكلفة -->
-                        <div class="form-group form-group-full">
-                            <label>الكلفة التقديرية (د.ت) <span class="required">*</span></label>
-                            <input type="number" name="cout" class="form-control" required 
-                                   step="0.01" min="0" placeholder="0.00">
-                        </div>
-                        
-                        <!-- 7. المقترح -->
-                        <div class="form-group form-group-full">
-                            <label>المقترح <span class="required">*</span></label>
-                            <textarea name="proposition" class="form-control" required 
-                                      placeholder="أدخل تفاصيل المقترح والتوصيات..."></textarea>
-                        </div>
-                        
-                        <!-- 8. المقرر -->
-                        <div class="form-group">
-                            <label>المقرر (الإداري/المقرر) <span class="required">*</span></label>
-                            <select name="idRapporteur" class="form-control" required>
-                                <option value="">-- اختر المقرر --</option>
-                                <?php foreach ($rapporteurs as $rapp): ?>
-                                    <option value="<?php echo $rapp['idUser']; ?>"
-                                            <?php echo ($rapp['idUser'] == $_SESSION['user_id']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($rapp['nomUser']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <!-- 9. عنوان الملف -->
-                        <div class="form-group">
-                            <label>عنوان المقترح <span class="required">*</span></label>
-                            <input type="text" name="libDoc" class="form-control" required 
-                                   placeholder="أدخل عنوان المقترح">
-                        </div>
-                        
-                        <!-- 10. الملف -->
-                        <div class="form-group form-group-full">
-                            <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
-                            <input type="file" name="fichier" id="fichier" class="form-control" 
-                                   accept=".pdf,.doc,.docx,.xls,.xlsx" required>
+                            <label>محضر الجلسة <span style="color: #999;">(اختياري)</span></label>
+                            <input type="file" name="fichierMahdar" id="fichierMahdar" class="form-control" 
+                                accept=".pdf,.doc,.docx,.xls,.xlsx">
                             <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
                                 الحجم الأقصى: 5MB - الأنواع المقبولة: PDF, Word, Excel
                             </small>
                         </div>
+                        
+                        <!-- 4. عنوان محضر الجلسة -->
+                        <div class="form-group">
+                            <label>عنوان ملف المحضر <span id="mahdarRequired" style="color: #999;">(اختياري)</span></label>
+                            <input type="text" name="libDocMahdar" id="libDocMahdar" class="form-control" 
+                                placeholder="أدخل عنوان المحضر">
+                        </div>
                     </div>
                     
                     <div class="modal-footer">
-                        <button type="submit" class="btn btn-success">✓ حفظ المقترح</button>
+                        <button type="submit" class="btn btn-success">✓ حفظ الجلسة</button>
                         <button type="button" class="btn btn-secondary" id="btnCancelModal">✕ إلغاء</button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- MODAL AJOUT التقرير الرقابي -->
-    <div id="taqrirModal" class="modal">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h2>📊 إضافة التقرير الرقابي</h2>
-                <span class="close" id="btnCloseTaqrir">&times;</span>
-            </div>
-            <div class="modal-body">
-                <div id="taqrirAlert"></div>
-                
-                <form id="taqrirForm" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                    <input type="hidden" name="action" value="upload_taqrir">
-                    <input type="hidden" name="projetId" id="taqrirProjetId">
-                    
-                    <div class="form-group">
-                        <label>عنوان التقرير <span class="required">*</span></label>
-                        <input type="text" name="libDoc" class="form-control" required 
-                               placeholder="أدخل عنوان التقرير الرقابي">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
-                        <input type="file" name="fichier_taqrir" id="fichier_taqrir" class="form-control" 
-                               accept=".pdf,.doc,.docx,.xls,.xlsx" required>
-                        <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                            الحجم الأقصى: 5MB
-                        </small>
-                    </div>
-                    
-                    <div class="modal-footer">
-                        <button type="submit" class="btn btn-success">✓ رفع التقرير</button>
-                        <button type="button" class="btn btn-secondary" id="btnCancelTaqrir">✕ إلغاء</button>
                     </div>
                 </form>
             </div>
@@ -1232,161 +1028,139 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 
     <script>
         // Variables globales
-        var modal = document.getElementById('addProjetModal');
+        var modal = document.getElementById('addCommissionModal');
         var btnOpen = document.getElementById('btnOpenModal');
         var btnClose = document.getElementById('btnCloseModal');
         var btnCancel = document.getElementById('btnCancelModal');
-        
-        var taqrirModal = document.getElementById('taqrirModal');
-        var btnCloseTaqrir = document.getElementById('btnCloseTaqrir');
-        var btnCancelTaqrir = document.getElementById('btnCancelTaqrir');
-        
-        // Ouvrir modal التقرير الرقابي
-        function openTaqrirModal(projetId) {
-            document.getElementById('taqrirProjetId').value = projetId;
-            taqrirModal.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-        
-        // Fermer modal التقرير الرقابي
-        function closeTaqrirModal() {
-            taqrirModal.classList.remove('show');
-            document.body.style.overflow = 'auto';
-            document.getElementById('taqrirForm').reset();
-            document.getElementById('taqrirAlert').innerHTML = '';
-        }
-        
-        if (btnCloseTaqrir) {
-            btnCloseTaqrir.onclick = closeTaqrirModal;
-        }
-        
-        if (btnCancelTaqrir) {
-            btnCancelTaqrir.onclick = closeTaqrirModal;
-        }
-        
-        // Soumettre التقرير الرقابي
-        document.getElementById('taqrirForm').onsubmit = function(e) {
-            e.preventDefault();
-            
-            var formData = new FormData(this);
-            var alertDiv = document.getElementById('taqrirAlert');
-            
-            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #ff9800; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الرفع...</p></div>';
-            
-            fetch('projets.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
-                } else {
-                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
-                }
-            })
-            .catch(function(error) {
-                console.error('Error:', error);
-                alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
-            });
-        };
-        
-        // Validation fichier التقرير الرقابي
-        document.getElementById('fichier_taqrir').onchange = function() {
-            var file = this.files[0];
-            if (file) {
-                var fileSize = file.size / 1024 / 1024;
-                var allowedTypes = ['application/pdf', 'application/msword', 
-                                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                   'application/vnd.ms-excel',
-                                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
-                
-                if (fileSize > 10) {
-                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
-                    this.value = '';
-                    return false;
-                }
-                
-                if (!allowedTypes.includes(file.type)) {
-                    alert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel');
-                    this.value = '';
-                    return false;
-                }
-            }
-        };
-        
-        // Ouvrir le modal ajout projet
+        var projetIndex = 1; // Pour suivre l'index des projets ajoutés
+
+        // Liste des projets (générée depuis PHP)
+        var projetsOptions = `
+            <option value="">-- اختر المشروع --</option>
+            <?php foreach ($projets as $projet): ?>
+                <option value="<?php echo $projet['idPro']; ?>">
+                    <?php echo htmlspecialchars($projet['sujet']); ?>
+                </option>
+            <?php endforeach; ?>
+        `;
+
+        // Ouvrir le modal ajout commission
         if (btnOpen) {
             btnOpen.onclick = function() {
                 modal.classList.add('show');
                 document.body.style.overflow = 'hidden';
             }
         }
-        
-        // Fermer le modal ajout projet
+
+        // Fermer le modal ajout commission
         function fermerModal() {
             modal.classList.remove('show');
             document.body.style.overflow = 'auto';
-            document.getElementById('addProjetForm').reset();
-            document.getElementById('modalEtab').disabled = true;
+            
+            // Réinitialiser le formulaire
+            document.getElementById('addCommissionForm').reset();
             document.getElementById('modalAlert').innerHTML = '';
+            
+            // Réinitialiser la liste des projets (garder seulement le premier)
+            var container = document.getElementById('projetsContainer');
+            var rows = container.querySelectorAll('.projet-row');
+            
+            // Supprimer tous les projets sauf le premier
+            for (var i = 1; i < rows.length; i++) {
+                rows[i].remove();
+            }
+            
+            // Cacher le bouton de suppression du premier
+            var firstRow = container.querySelector('.projet-row');
+            if (firstRow) {
+                firstRow.querySelector('.btn-remove').style.visibility = 'hidden';
+            }
+            
+            projetIndex = 1;
         }
-        
+
         if (btnClose) {
             btnClose.onclick = fermerModal;
         }
         if (btnCancel) {
             btnCancel.onclick = fermerModal;
         }
-        
+
         // Fermer en cliquant à l'extérieur
         window.onclick = function(event) {
             if (event.target == modal) {
                 fermerModal();
             }
-            if (event.target == taqrirModal) {
-                closeTaqrirModal();
+        }
+
+        // Fonction pour ajouter un nouveau projet
+        function addProjet() {
+            var container = document.getElementById('projetsContainer');
+            
+            var newRow = document.createElement('div');
+            newRow.className = 'projet-row';
+            newRow.setAttribute('data-index', projetIndex);
+            
+            newRow.innerHTML = `
+                <div class="form-group" style="margin: 0;">
+                    <label>المشروع <span class="required">*</span></label>
+                    <select name="projets[]" class="form-control" required>
+                        ${projetsOptions}
+                    </select>
+                </div>
+                
+                <div class="form-group" style="margin: 0;">
+                    <label>نوعية المقترح <span class="required">*</span></label>
+                    <select name="naturePcs[]" class="form-control" required>
+                        <option value="">-- اختر النوعية --</option>
+                        <option value="20">إدراج وقتي</option>
+                        <option value="21">إدراج نهائي</option>
+                        <option value="22">إسناد وقتي</option>
+                        <option value="23">إسناد نهائي</option>      
+                    </select>
+                </div>
+                
+                <button type="button" class="btn-remove" onclick="removeProjet(${projetIndex})">×</button>
+            `;
+            
+            container.appendChild(newRow);
+            
+            // Afficher le bouton de suppression du premier projet si plus d'un projet
+            updateRemoveButtons();
+            
+            projetIndex++;
+        }
+
+        // Fonction pour supprimer un projet
+        function removeProjet(index) {
+            var row = document.querySelector(`.projet-row[data-index="${index}"]`);
+            if (row) {
+                row.remove();
+                updateRemoveButtons();
             }
         }
-        
-        // Charger les établissements
-        document.getElementById('modalMinistere').onchange = function() {
-            var ministereId = this.value;
-            var etabSelect = document.getElementById('modalEtab');
+
+        // Fonction pour mettre à jour l'affichage des boutons de suppression
+        function updateRemoveButtons() {
+            var rows = document.querySelectorAll('.projet-row');
             
-            etabSelect.innerHTML = '<option value="">جاري التحميل...</option>';
-            
-            if (ministereId) {
-                fetch('get_etablissements.php?ministere=' + ministereId)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success && data.etablissements.length > 0) {
-                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                            data.etablissements.forEach(function(etab) {
-                                var option = document.createElement('option');
-                                option.value = etab.idEtablissement;
-                                option.textContent = etab.libEtablissement;
-                                etabSelect.appendChild(option);
-                            });
-                        } else {
-                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                        }
-                    })
-                    .catch(function(error) {
-                        console.error('Error:', error);
-                        etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                    });
+            if (rows.length === 1) {
+                // Si un seul projet, cacher le bouton de suppression
+                rows[0].querySelector('.btn-remove').style.visibility = 'hidden';
             } else {
-                etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
+                // Si plusieurs projets, afficher tous les boutons
+                rows.forEach(function(row) {
+                    row.querySelector('.btn-remove').style.visibility = 'visible';
+                });
             }
-        };
-        
-        // Validation du fichier
-        document.getElementById('fichier').onchange = function() {
+        }
+
+        // Validation du fichier محضر الجلسة
+        document.getElementById('fichierMahdar')?.addEventListener('change', function() {
             var file = this.files[0];
+            var libDocInput = document.getElementById('libDocMahdar');
+            var requiredSpan = document.getElementById('mahdarRequired');
+            
             if (file) {
                 var fileSize = file.size / 1024 / 1024; // En MB
                 var allowedTypes = ['application/pdf', 'application/msword', 
@@ -1394,30 +1168,92 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                    'application/vnd.ms-excel',
                                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
-                if (fileSize > 10) {
+                if (fileSize > 5) {
                     alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
                     this.value = '';
+                    libDocInput.required = false;
+                    requiredSpan.innerHTML = '(اختياري)';
+                    requiredSpan.style.color = '#999';
                     return false;
                 }
                 
                 if (!allowedTypes.includes(file.type)) {
                     alert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel');
                     this.value = '';
+                    libDocInput.required = false;
+                    requiredSpan.innerHTML = '(اختياري)';
+                    requiredSpan.style.color = '#999';
                     return false;
                 }
+                
+                // Si un fichier est sélectionné, rendre le champ de titre obligatoire
+                libDocInput.required = true;
+                requiredSpan.innerHTML = '*';
+                requiredSpan.style.color = '#dc3545';
+            } else {
+                // Si aucun fichier, le champ de titre n'est pas obligatoire
+                libDocInput.required = false;
+                requiredSpan.innerHTML = '(اختياري)';
+                requiredSpan.style.color = '#999';
             }
-        };
-        
+        });
+
         // Soumettre le formulaire
-        document.getElementById('addProjetForm').onsubmit = function(e) {
+        document.getElementById('addCommissionForm')?.addEventListener('submit', function(e) {
             e.preventDefault();
+            
+            // Vérifier qu'il y a au moins un projet
+            var projetsSelects = document.querySelectorAll('select[name="projets[]"]');
+            if (projetsSelects.length === 0) {
+                alert('يجب إضافة مشروع واحد على الأقل');
+                return false;
+            }
+            
+            // Vérifier que tous les projets sont sélectionnés
+            var allSelected = true;
+            var selectedProjects = new Set();
+            
+            projetsSelects.forEach(function(select, index) {
+                if (!select.value) {
+                    allSelected = false;
+                } else {
+                    // Vérifier les doublons
+                    if (selectedProjects.has(select.value)) {
+                        alert('لا يمكن إضافة نفس المشروع مرتين');
+                        allSelected = false;
+                        return;
+                    }
+                    selectedProjects.add(select.value);
+                }
+            });
+            
+            if (!allSelected) {
+                alert('يرجى اختيار جميع المشاريع بشكل صحيح');
+                return false;
+            }
+            
+            // Vérifier que toutes les نوعية sont sélectionnées
+            var naturePcsSelects = document.querySelectorAll('select[name="naturePcs[]"]');
+            var allNatureSelected = true;
+            
+            naturePcsSelects.forEach(function(select) {
+                if (!select.value) {
+                    allNatureSelected = false;
+                }
+            });
+            
+            if (!allNatureSelected) {
+                alert('يرجى اختيار نوعية المقترح لجميع المشاريع');
+                return false;
+            }
             
             var formData = new FormData(this);
             var alertDiv = document.getElementById('modalAlert');
             
+            // Afficher le loader
             alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الحفظ...</p></div>';
             
-            fetch('projets.php', {
+            fetch('commissions.php', {
                 method: 'POST',
                 body: formData
             })
@@ -1436,8 +1272,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 console.error('Error:', error);
                 alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
             });
-        };
-        // REMPLACER la fonction de changement d'éléments par page:
+        });
+
+        // Changement d'éléments par page
         document.getElementById('itemsPerPageSelect')?.addEventListener('change', function() {
             var params = new URLSearchParams(window.location.search);
             
@@ -1447,10 +1284,34 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 params.set('items_per_page', this.value);
             }
             
-            params.delete('page'); // Revenir à la première page
-            window.location.href = 'projets.php?' + params.toString();
+            params.delete('page');
+            window.location.href = 'commissions.php?' + params.toString();
         });
-        
+
+        // Fonction pour confirmer la suppression d'une commission
+        function confirmDeleteCommission(idCom) {
+            if (confirm('هل أنت متأكد من حذف هذه الجلسة؟\n\nتحذير: سيتم حذف جميع المشاريع المرتبطة بهذه الجلسة!')) {
+                // Créer un formulaire pour la suppression
+                var form = document.createElement('form');
+                form.method = 'POST';
+                form.action = 'delete_commission.php';
+                
+                var inputId = document.createElement('input');
+                inputId.type = 'hidden';
+                inputId.name = 'idCom';
+                inputId.value = idCom;
+                
+                var inputToken = document.createElement('input');
+                inputToken.type = 'hidden';
+                inputToken.name = 'csrf_token';
+                inputToken.value = '<?php echo $csrf_token; ?>';
+                
+                form.appendChild(inputId);
+                form.appendChild(inputToken);
+                document.body.appendChild(form);
+                form.submit();
+            }
+        }
     </script>
 </body>
 </html>

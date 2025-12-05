@@ -100,22 +100,24 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
         .admin-header {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
             color: white;
             padding: 40px;
             border-radius: 15px;
             margin-bottom: 30px;
             text-align: center;
+            box-shadow: 0 8px 25px rgba(255, 107, 53, 0.3);
         }
         
         .admin-header h2 {
             font-size: 32px;
             margin-bottom: 10px;
+            text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
         
         .admin-header p {
             font-size: 16px;
-            opacity: 0.9;
+            opacity: 0.95;
         }
         
         .stats-cards {
@@ -209,7 +211,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
         .filter-group input:focus,
         .filter-group select:focus {
             outline: none;
-            border-color: #667eea;
+            border-color: #FF6B35;
         }
         
         .filter-actions {
@@ -231,13 +233,13 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
         }
         
         .btn-primary {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
             color: white;
         }
         
         .btn-primary:hover {
             transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 5px 15px rgba(255, 107, 53, 0.4);
         }
         
         .btn-secondary {
@@ -272,7 +274,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
         }
         
         thead {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
             color: white;
         }
         
@@ -345,15 +347,15 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
         }
         
         .pagination a:hover {
-            background: #667eea;
+            background: #FF6B35;
             color: white;
-            border-color: #667eea;
+            border-color: #FF6B35;
         }
         
         .pagination .active {
-            background: #667eea;
+            background: #FF6B35;
             color: white;
-            border-color: #667eea;
+            border-color: #FF6B35;
         }
         
         .no-data {
@@ -372,12 +374,13 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
             position: absolute;
             background-color: white;
             min-width: 200px;
-            box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+            box-shadow: 0 8px 16px rgba(255, 107, 53, 0.2);
             border-radius: 8px;
             z-index: 1;
             top: 100%;
             right: 0;
             margin-top: 5px;
+            border-top: 3px solid #FF6B35;
         }
         
         .submenu:hover .submenu-content {
@@ -393,7 +396,8 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
         }
         
         .submenu-content a:hover {
-            background-color: #f1f1f1;
+            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            color: white;
         }
     </style>
 </head>
@@ -603,7 +607,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
                     
                 <?php else: ?>
                     <div class="no-data">
-                        <p>📭 لا توجد سجلات لعرضها</p>
+                        <p>🔭 لا توجد سجلات لعرضها</p>
                     </div>
                 <?php endif; ?>
             </div>

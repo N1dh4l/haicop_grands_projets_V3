@@ -15,12 +15,11 @@
                     <li class="has-submenu">
                         <a href="javascript:void(0)" class="submenu-toggle">الإدارة ▼</a>
                         <ul class="submenu-content">
-
-                            <li><a href="administration.php">📊 سجل الأنشطة</a></li>
-                            <li><a href="gestion_users.php">👥  المستخدمين</a></li>
-                            <li><a href="gestion_users.php"> الوزارات </a></li>
+                            <li><a href="administration.php">الأنشطة</a></li>
+                            <li><a href="gestion_users.php">المستخدمين</a></li>
+                            <li><a href="gestion_users.php">الوزارات </a></li>
                             <li><a href="gestion_users.php">المؤسسات</a></li>
-                            <li><a href="parametres.php">⚙️ الإعدادات</a></li>
+                            <li><a href="parametres.php">الإعدادات</a></li>
                         </ul>
                     </li>
                 </ul>
@@ -35,12 +34,12 @@
 
 <style>
     /* ========================================== */
-    /* STYLES POUR LE MENU DÉROULANT */
+    /* STYLES POUR LE MENU DÉROULANT - THÈME ORANGE */
     /* ========================================== */
 
     .main-header {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+        box-shadow: 0 4px 20px rgba(255, 107, 53, 0.3);
         position: sticky;
         top: 0;
         z-index: 1000;
@@ -60,22 +59,25 @@
     }
 
     .logo h1 {
-        color: #ffd700;
+        color: #ffffff;
         font-size: 22px;
         margin: 0 0 5px 0;
         font-weight: bold;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .logo h3 {
-        color: white;
+        color: #ffffff;
         font-size: 18px;
         margin: 0 0 3px 0;
+        text-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
     }
 
     .logo p {
-        color: #e0e0e0;
+        color: #ffffff;
         font-size: 14px;
         margin: 0;
+        opacity: 0.95;
     }
 
     /* NAVIGATION PRINCIPALE */
@@ -103,8 +105,9 @@
     }
 
     .main-nav > ul > li > a:hover {
-        background: rgba(255, 255, 255, 0.15);
+        background: rgba(255, 255, 255, 0.2);
         transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
 
     /* MENU DÉROULANT */
@@ -124,7 +127,7 @@
         background: white;
         min-width: 250px;
         border-radius: 8px;
-        box-shadow: 0 8px 25px rgba(0, 0, 0, 0.2);
+        box-shadow: 0 8px 25px rgba(255, 107, 53, 0.25);
         opacity: 0;
         visibility: hidden;
         transform: translateY(-10px);
@@ -133,6 +136,7 @@
         padding: 8px 0;
         list-style: none;
         z-index: 1000;
+        border-top: 3px solid #FF6B35;
     }
 
     .has-submenu:hover .submenu-content {
@@ -158,7 +162,7 @@
     }
 
     .submenu-content a:hover {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
         color: white;
         transform: translateX(-5px);
     }
@@ -187,26 +191,28 @@
         color: white;
         font-weight: 500;
         padding: 8px 15px;
-        background: rgba(255, 255, 255, 0.1);
+        background: rgba(255, 255, 255, 0.2);
         border-radius: 20px;
         font-size: 14px;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     }
 
     .btn-logout {
-        background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
-        color: white;
+        background: rgba(255, 255, 255, 0.95);
+        color: #FF6B35;
         padding: 10px 20px;
         border-radius: 8px;
         text-decoration: none;
         font-weight: 600;
         font-size: 14px;
         transition: all 0.3s ease;
-        box-shadow: 0 4px 15px rgba(255, 107, 107, 0.3);
+        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
     }
 
     .btn-logout:hover {
+        background: white;
         transform: translateY(-2px);
-        box-shadow: 0 6px 20px rgba(255, 107, 107, 0.4);
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
     }
 
     /* RESPONSIVE */
