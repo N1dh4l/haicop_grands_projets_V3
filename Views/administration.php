@@ -503,9 +503,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
                     <table>
                         <thead>
                             <tr>
-                                <th>#</th>
                                 <th>المستخدم</th>
-                                <th>البريد الإلكتروني</th>
                                 <th>العملية</th>
                                 <th>التاريخ</th>
                                 <th>النوع</th>
@@ -514,10 +512,8 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
                         <tbody>
                             <?php foreach ($logs as $log): ?>
                                 <tr>
-                                    <td><?php echo $log['idJournal']; ?></td>
                                     <td><?php echo htmlspecialchars($log['nomUser']); ?></td>
-                                    <td><?php echo htmlspecialchars($log['emailUser']); ?></td>
-                                    <td style="text-align: right;">
+                                    <td style="text-align: right; width: 50%;">
                                         <?php echo htmlspecialchars($log['action']); ?>
                                     </td>
                                     <td><?php echo date('Y/m/d', strtotime($log['date'])); ?></td>

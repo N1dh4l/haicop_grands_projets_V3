@@ -1,179 +1,457 @@
 <?php
-ob_start();
-require_once '../Config/Database.php';
-require_once '../Config/Security.php';
-require_once '../Config/Permissions.php';
+    ob_start();
+    require_once '../Config/Database.php';
+    require_once '../Config/Security.php';
+    require_once '../Config/Permissions.php';
 
-Security::startSecureSession();
-Security::requireLogin();
+    Security::startSecureSession();
+    Security::requireLogin();
 
-if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
-    Security::logout();
-}
-$_SESSION['last_activity'] = time();
+    if (isset($_SESSION['last_activity']) && (time() - $_SESSION['last_activity'] > 1800)) {
+        Security::logout();
+    }
+    $_SESSION['last_activity'] = time();
 
-// ==========================================
-// INITIALISER LA BASE DE DONNÉES ICI (AVANT TOUT)
-// ==========================================
-$database = new Database();
-$db = $database->getConnection();
+    $database = new Database();
+    $db = $database->getConnection();
 
-// Traitement de l'upload du التقرير الرقابي
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_taqrir') {
-    // Nettoyer tout buffer de sortie
+    // ==========================================
+    // TRAITEMENT AJAX - AJOUT D'APPEL D'OFFRE
+    // ==========================================
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_appel_offre') {
+        ob_clean();
+        header('Content-Type: application/json; charset=utf-8');
+        
+        try {
+            // 1. Validation CSRF
+            if (!Security::validateCSRFToken($_POST['csrf_token'])) {
+                echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // 2. Récupération des données
+            $idProjet = intval($_POST['idpro']);
+            
+            // 3. Vérifier que le projet existe
+            $sqlCheck = "SELECT idUser FROM projet WHERE idPro = :idProjet";
+            $stmtCheck = $db->prepare($sqlCheck);
+            $stmtCheck->bindParam(':idProjet', $idProjet, PDO::PARAM_INT);
+            $stmtCheck->execute();
+            $projetCheck = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+            
+            if (!$projetCheck) {
+                echo json_encode(['success' => false, 'message' => 'المشروع غير موجود'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // 4. Vérifier les permissions
+            if (!Permissions::canEditProjet($projetCheck['idUser'])) {
+                echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لإضافة صفقات'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // 5. Valider qu'il y a au moins un lot
+            if (!isset($_POST['lots']) || empty($_POST['lots'])) {
+                echo json_encode(['success' => false, 'message' => 'يجب إضافة صفقة واحدة على الأقل'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // 6. Validation du fichier
+            $uploadError = null;
+            $cheminDocument = null;
+            
+            if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
+                $file = $_FILES['fichier'];
+                $fileName = $file['name'];
+                $fileTmpName = $file['tmp_name'];
+                $fileSize = $file['size'];
+                $fileError = $file['error'];
+                
+                // Vérifier la taille (max 10MB)
+                if ($fileSize > 10485760) {
+                    echo json_encode(['success' => false, 'message' => 'حجم الملف يجب أن يكون أقل من 10 ميغابايت'], JSON_UNESCAPED_UNICODE);
+                    exit();
+                }
+                
+                // Vérifier l'extension
+                $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                
+                if (!in_array($fileExtension, $allowedExtensions)) {
+                    echo json_encode(['success' => false, 'message' => 'نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel'], JSON_UNESCAPED_UNICODE);
+                    exit();
+                }
+                
+                // Créer le nom du fichier sécurisé
+                $uploadDir = '../uploads/appels_offres/';
+                if (!is_dir($uploadDir)) {
+                    mkdir($uploadDir, 0755, true);
+                }
+                
+                $newFileName = 'appel_offre_' . $idProjet . '_' . time() . '.' . $fileExtension;
+                $cheminDocument = $uploadDir . $newFileName;
+                
+                // Déplacer le fichier
+                if (!move_uploaded_file($fileTmpName, $cheminDocument)) {
+                    echo json_encode(['success' => false, 'message' => 'فشل تحميل الملف'], JSON_UNESCAPED_UNICODE);
+                    exit();
+                }
+            } else {
+                echo json_encode(['success' => false, 'message' => 'يجب إرفاق ملف الإسناد'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // 7. Début de la transaction
+            $db->beginTransaction();
+            
+            try {
+                // 8. Créer l'appel d'offre
+                $sqlAppel = "INSERT INTO appeloffre (idPro, dateCreation) VALUES (:idPro, CURDATE())";
+                $stmtAppel = $db->prepare($sqlAppel);
+                $stmtAppel->bindParam(':idPro', $idProjet, PDO::PARAM_INT);
+                $stmtAppel->execute();
+                
+                $idAppelOffre = $db->lastInsertId();
+                
+                // 9. Insérer le document dans la table document
+                $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                        VALUES (:idPro, :libDoc, :cheminAcces, 30, :idExterne)";
+                $stmtDoc = $db->prepare($sqlDoc);
+                $libDoc = 'ملف الإسناد';
+                $stmtDoc->bindParam(':idPro', $idProjet, PDO::PARAM_INT);
+                $stmtDoc->bindParam(':libDoc', $libDoc);
+                $stmtDoc->bindParam(':cheminAcces', $cheminDocument);
+                $stmtDoc->bindParam(':idExterne', $idAppelOffre, PDO::PARAM_INT);
+                $stmtDoc->execute();
+                
+                // 10. Insérer les lots
+                $sqlLot = "INSERT INTO lot (sujetLot, idFournisseur, somme, idAppelOffre) 
+                        VALUES (:sujetLot, :idFournisseur, :somme, :idAppelOffre)";
+                $stmtLot = $db->prepare($sqlLot);
+                
+                $lotsCount = 0;
+                foreach ($_POST['lots'] as $lot) {
+                    $sujetLot = Security::sanitizeInput($lot['sujetLot']);
+                    $idFournisseur = intval($lot['idFournisseur']);
+                    $somme = floatval($lot['somme']);
+                    
+                    // Validation
+                    if (empty($sujetLot) || $idFournisseur <= 0 || $somme <= 0) {
+                        throw new Exception('معلومات الصفقة غير صحيحة');
+                    }
+                    
+                    $stmtLot->bindParam(':sujetLot', $sujetLot);
+                    $stmtLot->bindParam(':idFournisseur', $idFournisseur, PDO::PARAM_INT);
+                    $stmtLot->bindParam(':somme', $somme);
+                    $stmtLot->bindParam(':idAppelOffre', $idAppelOffre, PDO::PARAM_INT);
+                    $stmtLot->execute();
+                    $lotsCount++;
+                }
+                
+                // 11. Logger l'action
+                $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
+                $logStmt = $db->prepare($logSql);
+                $logStmt->bindParam(':idUser', $_SESSION['user_id']);
+                $action = "إضافة صفقة رقم {$idAppelOffre} للمشروع رقم {$idProjet} مع {$lotsCount} صفقات";
+                $logStmt->bindParam(':action', $action);
+                $logStmt->execute();
+                
+                $db->commit();
+                
+                echo json_encode([
+                    'success' => true, 
+                    'message' => 'تم إضافة الصفقة بنجاح مع ' . $lotsCount . ' صفقات'
+                ], JSON_UNESCAPED_UNICODE);
+                
+            } catch (PDOException $e) {
+                $db->rollBack();
+                // Supprimer le fichier uploadé en cas d'erreur
+                if ($cheminDocument && file_exists($cheminDocument)) {
+                    unlink($cheminDocument);
+                }
+                throw $e;
+            }
+            
+        } catch (Exception $e) {
+            if (isset($db) && $db->inTransaction()) {
+                $db->rollBack();
+            }
+            // Supprimer le fichier uploadé en cas d'erreur
+            if (isset($cheminDocument) && $cheminDocument && file_exists($cheminDocument)) {
+                unlink($cheminDocument);
+            }
+            echo json_encode([
+                'success' => false, 
+                'message' => 'حدث خطأ: ' . $e->getMessage()
+            ], JSON_UNESCAPED_UNICODE);
+        }
+        exit();
+    }
+
+    // ==========================================
+    // RÉCUPÉRATION DES APPELS D'OFFRES
+    // ==========================================
+    $searchQuery = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
+    $filterMinistere = isset($_GET['ministere']) ? Security::sanitizeInput($_GET['ministere']) : '';
+
+    $sql = "SELECT 
+                ao.idApp,
+                ao.dateCreation,
+                p.sujet as projetSujet,
+                p.idPro,
+                m.libMinistere,
+                e.libEtablissement,
+                COUNT(l.lidLot) as nombreLots,
+                SUM(l.somme) as montantTotal
+            FROM appeloffre ao
+            INNER JOIN projet p ON ao.idPro = p.idPro
+            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
+            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
+            LEFT JOIN lot l ON ao.idApp = l.idAppelOffre
+            WHERE 1=1";
+
+    if (!empty($searchQuery)) {
+        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search)";
+    }
+    if (!empty($filterMinistere)) {
+        $sql .= " AND p.idMinistere = :ministere";
+    }
+
+    $sql .= " GROUP BY ao.idApp ORDER BY ao.dateCreation DESC";
+
+    $stmt = $db->prepare($sql);
+
+    if (!empty($searchQuery)) {
+        $searchParam = "%{$searchQuery}%";
+        $stmt->bindParam(':search', $searchParam);
+    }
+    if (!empty($filterMinistere)) {
+        $stmt->bindParam(':ministere', $filterMinistere);
+    }
+
+    $stmt->execute();
+    $appelsOffres = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    // Liste des ministères
+    $sqlMin = "SELECT idMinistere, libMinistere FROM ministere ORDER BY libMinistere";
+    $stmtMin = $db->prepare($sqlMin);
+    $stmtMin->execute();
+    $ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
+
+    // Liste des projets avec naturePc = 23 (approuvés par la commission)
+    $sqlProjets = "SELECT DISTINCT p.idPro, p.sujet 
+                FROM projet p
+                INNER JOIN projetcommission pc ON p.idPro = pc.idPro
+                WHERE pc.naturePc = 23
+                ORDER BY p.sujet";
+    $stmtProjets = $db->prepare($sqlProjets);
+    $stmtProjets->execute();
+    $projetsDisponibles = $stmtProjets->fetchAll(PDO::FETCH_ASSOC);
+
+    $csrf_token = Security::generateCSRFToken();
+    $page_title = "قائمة الصفقات - نظام إدارة المشاريع";
+    // ================================================================
+// ACTION: MISE À JOUR D'UN APPEL D'OFFRE
+// ================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'update_appel_offre') {
     ob_clean();
     header('Content-Type: application/json; charset=utf-8');
     
     try {
         // 1. Validation CSRF
         if (!Security::validateCSRFToken($_POST['csrf_token'])) {
-            echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان'], JSON_UNESCAPED_UNICODE);
+            echo json_encode([
+                'success' => false,
+                'message' => 'خطأ في التحقق من الأمان'
+            ], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
         // 2. Récupération et validation des données
-        $projetId = intval($_POST['projetId']);
-        $libDoc = Security::sanitizeInput($_POST['libDoc']);
+        $idAppel = intval($_POST['idApp']);
+        $idProjet = intval($_POST['idpro']);
         
-        if (empty($libDoc)) {
-            echo json_encode(['success' => false, 'message' => 'يرجى إدخال عنوان التقرير'], JSON_UNESCAPED_UNICODE);
+        if ($idAppel <= 0 || $idProjet <= 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'بيانات غير صحيحة'
+            ], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
-        // 3. Vérifier que le projet existe
-        $sqlCheck = "SELECT idUser FROM projet WHERE idPro = :projetId";
+        // 3. Vérifier que l'appel d'offre existe et récupérer les infos
+        $sqlCheck = "SELECT ao.*, p.idUser 
+                     FROM appeloffre ao
+                     INNER JOIN projet p ON ao.idPro = p.idPro
+                     WHERE ao.idApp = :idApp";
         $stmtCheck = $db->prepare($sqlCheck);
-        $stmtCheck->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+        $stmtCheck->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
         $stmtCheck->execute();
-        $projetCheck = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+        $appelOffre = $stmtCheck->fetch(PDO::FETCH_ASSOC);
         
-        if (!$projetCheck) {
-            echo json_encode(['success' => false, 'message' => 'المشروع غير موجود. الرجاء التحقق من رقم المشروع'], JSON_UNESCAPED_UNICODE);
+        if (!$appelOffre) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'الصفقة غير موجودة'
+            ], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
         // 4. Vérifier les permissions
-        if (!Permissions::canEditProjet($projetCheck['idUser'])) {
-            echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لتعديل هذا المقترح'], JSON_UNESCAPED_UNICODE);
+        if (!Permissions::canEditProjet($appelOffre['idUser'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'ليس لديك صلاحية لتعديل هذه الصفقة'
+            ], JSON_UNESCAPED_UNICODE);
             exit();
         }
         
-        // 5. Vérifier le fichier uploadé
-        if (!isset($_FILES['fichier_taqrir']) || $_FILES['fichier_taqrir']['error'] !== UPLOAD_ERR_OK) {
-            $errorMsg = 'لم يتم اختيار ملف';
-            if (isset($_FILES['fichier_taqrir']['error'])) {
-                switch ($_FILES['fichier_taqrir']['error']) {
-                    case UPLOAD_ERR_INI_SIZE:
-                    case UPLOAD_ERR_FORM_SIZE:
-                        $errorMsg = 'حجم الملف كبير جداً (الحد الأقصى 5MB)';
-                        break;
-                    case UPLOAD_ERR_PARTIAL:
-                        $errorMsg = 'تم رفع الملف جزئياً فقط';
-                        break;
-                    case UPLOAD_ERR_NO_FILE:
-                        $errorMsg = 'لم يتم اختيار ملف';
-                        break;
-                    default:
-                        $errorMsg = 'حدث خطأ في رفع الملف';
-                }
+        // 5. Valider les lots
+        if (!isset($_POST['lots']) || empty($_POST['lots'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'يجب إضافة قسط واحد على الأقل'
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // 6. Gestion du fichier (optionnel)
+        $nouveauFichier = null;
+        $ancienFichier = null;
+        
+        if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
+            $file = $_FILES['fichier'];
+            $fileSize = $file['size'];
+            $fileExtension = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+            
+            // Vérifier la taille (max 10MB)
+            if ($fileSize > 10485760) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'حجم الملف يجب أن يكون أقل من 10 ميغابايت'
+                ], JSON_UNESCAPED_UNICODE);
+                exit();
             }
-            echo json_encode(['success' => false, 'message' => $errorMsg], JSON_UNESCAPED_UNICODE);
-            exit();
+            
+            // Vérifier l'extension
+            $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+            if (!in_array($fileExtension, $allowedExtensions)) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel'
+                ], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            // Récupérer l'ancien fichier
+            $sqlOldDoc = "SELECT cheminAcces FROM document 
+                          WHERE idExterne = :idApp AND type = 30";
+            $stmtOldDoc = $db->prepare($sqlOldDoc);
+            $stmtOldDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtOldDoc->execute();
+            $oldDoc = $stmtOldDoc->fetch(PDO::FETCH_ASSOC);
+            if ($oldDoc) {
+                $ancienFichier = $oldDoc['cheminAcces'];
+            }
+            
+            // Créer le nom du fichier sécurisé
+            $uploadDir = '../uploads/appels_offres/';
+            if (!is_dir($uploadDir)) {
+                mkdir($uploadDir, 0755, true);
+            }
+            
+            $newFileName = 'appel_offre_' . $idProjet . '_' . time() . '.' . $fileExtension;
+            $nouveauFichier = $uploadDir . $newFileName;
+            
+            // Déplacer le fichier
+            if (!move_uploaded_file($file['tmp_name'], $nouveauFichier)) {
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'فشل تحميل الملف'
+                ], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
         }
         
-        // 6. Validation de la taille du fichier (5MB max)
-        $maxFileSize = 10 * 1024 * 1024; // 5MB en bytes
-        if ($_FILES['fichier_taqrir']['size'] > $maxFileSize) {
-            echo json_encode(['success' => false, 'message' => 'حجم الملف يجب أن يكون أقل من 5 ميغابايت'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 7. Créer le dossier s'il n'existe pas
-        $uploadDir = dirname(__DIR__) . '/uploads/documents/';
-        if (!file_exists($uploadDir)) {
-            mkdir($uploadDir, 0777, true);
-        }
-        
-        // 8. Validation du type de fichier
-        $fileName = $_FILES['fichier_taqrir']['name'];
-        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-        $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
-        
-        if (!in_array($fileExtension, $allowedExtensions)) {
-            echo json_encode(['success' => false, 'message' => 'نوع الملف غير مقبول. استخدم PDF, Word أو Excel'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 9. Générer un nom de fichier unique
-        $newFileName = 'taqrir_' . $projetId . '_' . time() . '.' . $fileExtension;
-        $filePath = $uploadDir . $newFileName;
-        $filePathDB = '../uploads/documents/' . $newFileName;
-        
-        // 10. Déplacer le fichier uploadé
-        if (!move_uploaded_file($_FILES['fichier_taqrir']['tmp_name'], $filePath)) {
-            echo json_encode(['success' => false, 'message' => 'فشل في رفع الملف'], JSON_UNESCAPED_UNICODE);
-            exit();
-        }
-        
-        // 11. Insertion dans la base de données
+        // 7. Début de la transaction
         $db->beginTransaction();
         
         try {
-            // Vérifier s'il existe déjà un تقرير رقابي pour ce projet
-            $sqlCheckExisting = "SELECT idDoc FROM document WHERE idPro = :idPro AND type = 11";
-            $stmtCheckExisting = $db->prepare($sqlCheckExisting);
-            $stmtCheckExisting->bindParam(':idPro', $projetId, PDO::PARAM_INT);
-            $stmtCheckExisting->execute();
+            // 8. Mettre à jour l'appel d'offre
+            $sqlUpdate = "UPDATE appeloffre SET idPro = :idPro WHERE idApp = :idApp";
+            $stmtUpdate = $db->prepare($sqlUpdate);
+            $stmtUpdate->bindParam(':idPro', $idProjet, PDO::PARAM_INT);
+            $stmtUpdate->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtUpdate->execute();
             
-            if ($stmtCheckExisting->rowCount() > 0) {
-                // Mettre à jour l'existant
-                $existingDoc = $stmtCheckExisting->fetch(PDO::FETCH_ASSOC);
-                $sqlUpdate = "UPDATE document 
-                             SET libDoc = :libDoc, cheminAcces = :cheminAcces 
-                             WHERE idDoc = :idDoc";
-                $stmtUpdate = $db->prepare($sqlUpdate);
-                $stmtUpdate->bindParam(':libDoc', $libDoc);
-                $stmtUpdate->bindParam(':cheminAcces', $filePathDB);
-                $stmtUpdate->bindParam(':idDoc', $existingDoc['idDoc'], PDO::PARAM_INT);
-                $stmtUpdate->execute();
-            } else {
-                // Insérer un nouveau document type 11
-                $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                           VALUES (:idPro, :libDoc, :cheminAcces, 11, :idExterne)";
-                $stmtDoc = $db->prepare($sqlDoc);
-                $stmtDoc->bindParam(':idPro', $projetId, PDO::PARAM_INT);
-                $stmtDoc->bindParam(':libDoc', $libDoc);
-                $stmtDoc->bindParam(':cheminAcces', $filePathDB);
-                $stmtDoc->bindParam(':idExterne', $projetId, PDO::PARAM_INT);
-                $stmtDoc->execute();
+            // 9. Mettre à jour le document si un nouveau fichier a été uploadé
+            if ($nouveauFichier) {
+                $sqlUpdateDoc = "UPDATE document 
+                                 SET cheminAcces = :cheminAcces 
+                                 WHERE idExterne = :idApp AND type = 30";
+                $stmtUpdateDoc = $db->prepare($sqlUpdateDoc);
+                $stmtUpdateDoc->bindParam(':cheminAcces', $nouveauFichier);
+                $stmtUpdateDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+                $stmtUpdateDoc->execute();
             }
             
-            // 12. Mettre à jour l'état du projet à 1 (الإحالة على اللجنة)
-            $sqlUpdateEtat = "UPDATE projet SET etat = 1 WHERE idPro = :projetId";
-            $stmtUpdateEtat = $db->prepare($sqlUpdateEtat);
-            $stmtUpdateEtat->bindParam(':projetId', $projetId, PDO::PARAM_INT);
-            $stmtUpdateEtat->execute();
+            // 10. Supprimer les anciens lots
+            $sqlDeleteLots = "DELETE FROM lot WHERE idAppelOffre = :idApp";
+            $stmtDeleteLots = $db->prepare($sqlDeleteLots);
+            $stmtDeleteLots->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtDeleteLots->execute();
             
-            // 13. Logger l'action
-            $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
+            // 11. Insérer les nouveaux lots
+            $sqlLot = "INSERT INTO lot (sujetLot, idFournisseur, somme, idAppelOffre) 
+                       VALUES (:sujetLot, :idFournisseur, :somme, :idAppelOffre)";
+            $stmtLot = $db->prepare($sqlLot);
+            
+            $lotsCount = 0;
+            foreach ($_POST['lots'] as $lot) {
+                $sujetLot = Security::sanitizeInput($lot['sujetLot']);
+                $idFournisseur = intval($lot['idFournisseur']);
+                $somme = floatval($lot['somme']);
+                
+                // Validation
+                if (empty($sujetLot) || $idFournisseur <= 0 || $somme < 0) {
+                    throw new Exception('معلومات القسط غير صحيحة');
+                }
+                
+                $stmtLot->bindParam(':sujetLot', $sujetLot);
+                $stmtLot->bindParam(':idFournisseur', $idFournisseur, PDO::PARAM_INT);
+                $stmtLot->bindParam(':somme', $somme);
+                $stmtLot->bindParam(':idAppelOffre', $idAppel, PDO::PARAM_INT);
+                $stmtLot->execute();
+                $lotsCount++;
+            }
+            
+            // 12. Logger l'action
+            $logSql = "INSERT INTO journal (idUser, action, date) 
+                       VALUES (:idUser, :action, CURDATE())";
             $logStmt = $db->prepare($logSql);
             $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة التقرير الرقابي للمقترح رقم " . $projetId . ": " . $libDoc . " - تغيير الحالة إلى الإحالة على اللجنة";
+            $action = "تعديل الصفقة رقم {$idAppel} مع {$lotsCount} أقساط";
             $logStmt->bindParam(':action', $action);
             $logStmt->execute();
             
+            // 13. Commit de la transaction
             $db->commit();
             
+            // 14. Supprimer l'ancien fichier si un nouveau a été uploadé
+            if ($ancienFichier && file_exists($ancienFichier) && $nouveauFichier) {
+                unlink($ancienFichier);
+            }
+            
             echo json_encode([
-                'success' => true, 
-                'message' => 'تم إضافة التقرير الرقابي بنجاح'
+                'success' => true,
+                'message' => 'تم تعديل الصفقة بنجاح'
             ], JSON_UNESCAPED_UNICODE);
             
         } catch (PDOException $e) {
             $db->rollBack();
-            // Supprimer le fichier uploadé en cas d'erreur BD
-            if (file_exists($filePath)) {
-                unlink($filePath);
+            // Supprimer le nouveau fichier en cas d'erreur
+            if ($nouveauFichier && file_exists($nouveauFichier)) {
+                unlink($nouveauFichier);
             }
             throw $e;
         }
@@ -182,346 +460,140 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         if (isset($db) && $db->inTransaction()) {
             $db->rollBack();
         }
+        error_log("Erreur update appel offre: " . $e->getMessage());
         echo json_encode([
-            'success' => false, 
+            'success' => false,
             'message' => 'حدث خطأ: ' . $e->getMessage()
         ], JSON_UNESCAPED_UNICODE);
     }
     exit();
 }
 
-if (!Permissions::canCreateProjet() && $_SERVER['REQUEST_METHOD'] === 'POST') {
-    echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لإضافة مقترحات']);
-    exit();
-}
-
-// Traitement AJAX pour l'ajout de projet
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'add_projet') {
-    header('Content-Type: application/json');
-    
-    if (!Security::validateCSRFToken($_POST['csrf_token'])) {
-        echo json_encode(['success' => false, 'message' => 'خطأ في التحقق من الأمان']);
-        exit();
-    }
-    
-    $idMinistere = Security::sanitizeInput($_POST['idMinistere']);
-    $idEtab = Security::sanitizeInput($_POST['idEtab']);
-    $sujet = Security::sanitizeInput($_POST['sujet']);
-    $dateArrive = Security::sanitizeInput($_POST['dateArrive']);
-    $procedurePro = Security::sanitizeInput($_POST['procedurePro']);
-    $cout = Security::sanitizeInput($_POST['cout']);
-    $proposition = Security::sanitizeInput($_POST['proposition']);
-    $idRapporteur = Security::sanitizeInput($_POST['idRapporteur']);
-    $libDoc = Security::sanitizeInput($_POST['libDoc']);
-    
-    if (empty($idEtab) || $idEtab === 'الوزارة') {
-        $idEtab = null;
-    }
+// ================================================================
+// ACTION: SUPPRESSION D'UN APPEL D'OFFRE
+// ================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'delete_appel_offre') {
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
     
     try {
+        // 1. Validation CSRF
+        if (!Security::validateCSRFToken($_POST['csrf_token'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'خطأ في التحقق من الأمان'
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // 2. Récupération de l'ID
+        $idAppel = intval($_POST['idApp']);
+        
+        if ($idAppel <= 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'معرف غير صحيح'
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // 3. Vérifier que l'appel d'offre existe
+        $sqlCheck = "SELECT ao.*, p.idUser 
+                     FROM appeloffre ao
+                     INNER JOIN projet p ON ao.idPro = p.idPro
+                     WHERE ao.idApp = :idApp";
+        $stmtCheck = $db->prepare($sqlCheck);
+        $stmtCheck->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+        $stmtCheck->execute();
+        $appelOffre = $stmtCheck->fetch(PDO::FETCH_ASSOC);
+        
+        if (!$appelOffre) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'الصفقة غير موجودة'
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // 4. Vérifier les permissions
+        if (!Permissions::canEditProjet($appelOffre['idUser'])) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'ليس لديك صلاحية لحذف هذه الصفقة'
+            ], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+        
+        // 5. Début de la transaction
         $db->beginTransaction();
         
-        $sql = "INSERT INTO projet (idMinistere, idEtab, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
-                VALUES (:idMinistere, :idEtab, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 0, NOW())";
-        
-        $stmt = $db->prepare($sql);
-        $stmt->bindParam(':idMinistere', $idMinistere);
-        $stmt->bindParam(':idEtab', $idEtab);
-        $stmt->bindParam(':sujet', $sujet);
-        $stmt->bindParam(':dateArrive', $dateArrive);
-        $stmt->bindParam(':procedurePro', $procedurePro);
-        $stmt->bindParam(':cout', $cout);
-        $stmt->bindParam(':proposition', $proposition);
-        $stmt->bindParam(':idRapporteur', $idRapporteur);
-        
-        if ($stmt->execute()) {
-            $projetId = $db->lastInsertId();
+        try {
+            // 6. Récupérer le chemin du document avant suppression
+            $sqlDoc = "SELECT cheminAcces FROM document 
+                       WHERE idExterne = :idApp AND type = 30";
+            $stmtDoc = $db->prepare($sqlDoc);
+            $stmtDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtDoc->execute();
+            $document = $stmtDoc->fetch(PDO::FETCH_ASSOC);
             
-            // Gestion du fichier المقترح
-            if (isset($_FILES['fichier']) && $_FILES['fichier']['error'] === UPLOAD_ERR_OK) {
-                $uploadDir = dirname(__DIR__) . '/uploads/documents/';
-                
-                if (!file_exists($uploadDir)) {
-                    mkdir($uploadDir, 0777, true);
-                }
-                
-                $fileName = $_FILES['fichier']['name'];
-                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
-                $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
-                
-                if (in_array($fileExtension, $allowedExtensions)) {
-                    $newFileName = 'doc_' . $projetId . '_' . time() . '.' . $fileExtension;
-                    $filePath = $uploadDir . $newFileName;
-                    $filePathDB = '../uploads/documents/' . $newFileName;
-                    
-                    if (move_uploaded_file($_FILES['fichier']['tmp_name'], $filePath)) {
-                        $sqlDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                                   VALUES (:idPro, :libDoc, :cheminAcces, 1, :idExterne)";
-                        $stmtDoc = $db->prepare($sqlDoc);
-                        $stmtDoc->bindParam(':idPro', $projetId);
-                        $stmtDoc->bindParam(':libDoc', $libDoc);
-                        $stmtDoc->bindParam(':cheminAcces', $filePathDB);
-                        $stmtDoc->bindParam(':idExterne', $projetId);
-                        $stmtDoc->execute();
-                    }
-                }
-            }
+            // 7. Supprimer les lots
+            $sqlDeleteLots = "DELETE FROM lot WHERE idAppelOffre = :idApp";
+            $stmtDeleteLots = $db->prepare($sqlDeleteLots);
+            $stmtDeleteLots->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtDeleteLots->execute();
             
-            // Log l'action
-            $logSql = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, CURDATE())";
+            // 8. Supprimer le document de la base
+            $sqlDeleteDoc = "DELETE FROM document 
+                             WHERE idExterne = :idApp AND type = 30";
+            $stmtDeleteDoc = $db->prepare($sqlDeleteDoc);
+            $stmtDeleteDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtDeleteDoc->execute();
+            
+            // 9. Supprimer l'appel d'offre
+            $sqlDeleteAppel = "DELETE FROM appeloffre WHERE idApp = :idApp";
+            $stmtDeleteAppel = $db->prepare($sqlDeleteAppel);
+            $stmtDeleteAppel->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+            $stmtDeleteAppel->execute();
+            
+            // 10. Logger l'action
+            $logSql = "INSERT INTO journal (idUser, action, date) 
+                       VALUES (:idUser, :action, CURDATE())";
             $logStmt = $db->prepare($logSql);
             $logStmt->bindParam(':idUser', $_SESSION['user_id']);
-            $action = "إضافة مقترح جديد رقم {$projetId}: " . substr($sujet, 0, 50);
+            $action = "حذف الصفقة رقم {$idAppel}";
             $logStmt->bindParam(':action', $action);
             $logStmt->execute();
             
+            // 11. Commit de la transaction
             $db->commit();
-            echo json_encode(['success' => true, 'message' => 'تم إضافة المقترح بنجاح']);
-        } else {
+            
+            // 12. Supprimer le fichier physique après le commit
+            if ($document && file_exists($document['cheminAcces'])) {
+                unlink($document['cheminAcces']);
+            }
+            
+            echo json_encode([
+                'success' => true,
+                'message' => 'تم حذف الصفقة بنجاح'
+            ], JSON_UNESCAPED_UNICODE);
+            
+        } catch (PDOException $e) {
             $db->rollBack();
-            echo json_encode(['success' => false, 'message' => 'فشل في إضافة المقترح']);
+            throw $e;
         }
-    } catch (PDOException $e) {
-        $db->rollBack();
-        echo json_encode(['success' => false, 'message' => 'حدث خطأ في قاعدة البيانات']);
+        
+    } catch (Exception $e) {
+        if (isset($db) && $db->inTransaction()) {
+            $db->rollBack();
+        }
+        error_log("Erreur delete appel offre: " . $e->getMessage());
+        echo json_encode([
+            'success' => false,
+            'message' => 'حدث خطأ: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
     }
     exit();
 }
-
-    // Récupération des projets
-    $searchQuery = isset($_GET['search']) ? Security::sanitizeInput($_GET['search']) : '';
-    $filterEtat = isset($_GET['etat']) ? Security::sanitizeInput($_GET['etat']) : '';
-    $filterMinistere = isset($_GET['ministere']) ? Security::sanitizeInput($_GET['ministere']) : '';
-
-    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
-            CASE 
-                WHEN p.etat = 0 THEN 'بصدد الدرس'
-                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                WHEN p.etat = 2 THEN 'الموافقة'
-                WHEN p.etat = 3 THEN 'عدم الموافقة'
-                ELSE 'غير معروف'
-            END as etatLib,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
-            FROM projet p
-            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-            LEFT JOIN user u ON p.idUser = u.idUser
-            WHERE 1=1";
-
-    // Filtre selon le rôle
-   $filterYear = isset($_GET['year']) ? Security::sanitizeInput($_GET['year']) : '';
-
-    // Récupérer les années disponibles des projets
-    $sqlYears = "SELECT DISTINCT YEAR(dateArrive) as year 
-                FROM projet 
-                WHERE dateArrive IS NOT NULL 
-                ORDER BY year DESC";
-    $stmtYears = $db->prepare($sqlYears);
-    $stmtYears->execute();
-    $years = $stmtYears->fetchAll(PDO::FETCH_ASSOC);
-
-    if (!empty($searchQuery)) {
-        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sql .= " AND p.etat = :etat";
-    }
-    if (!empty($filterMinistere)) {
-        $sqlCount .= " AND p.idMinistere = :ministere";
-    }
-    
-    if (!empty($filterYear)) {
-        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
-    }
-    if (!empty($filterYear)) {
-        $sql .= " AND YEAR(p.dateArrive) = :year";
-    }
-    // PUIS dans les bindParam (pour COUNT):
-    if (!empty($filterYear)) {
-        $stmtCount->bindParam(':year', $filterYear);
-    }
-
-    // ET pour la requête principale:
-    if (!empty($filterYear)) {
-        $stmt->bindParam(':year', $filterYear);
-    }
-
-    $sql .= " ORDER BY p.dateCreation DESC";
-    $stmt = $db->prepare($sql);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmt->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmt->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmt->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmt->execute();
-    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-    // Liste des ministères
-    $sqlMin = "SELECT idMinistere, libMinistere FROM ministere ORDER BY libMinistere";
-    $stmtMin = $db->prepare($sqlMin);
-    $stmtMin->execute();
-    $ministeres = $stmtMin->fetchAll(PDO::FETCH_ASSOC);
-
-    // Liste des rapporteurs (Admin et Rapporteur uniquement)
-    $sqlRapp = "SELECT idUser, nomUser FROM user WHERE typeCpt IN (2, 3) ORDER BY nomUser";
-    $stmtRapp = $db->prepare($sqlRapp);
-    $stmtRapp->execute();
-    $rapporteurs = $stmtRapp->fetchAll(PDO::FETCH_ASSOC);
-
-    $csrf_token = Security::generateCSRFToken();
-    $page_title = "قائمة المقترحات - نظام إدارة المشاريع";
-    // Nombre d'éléments par page
-    $itemsPerPage = 10;
-
-    // Page actuelle (par défaut 1)
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-
-    // Calculer l'offset
-    $offset = ($currentPage - 1) * $itemsPerPage;
-
-    // ==========================================
-    // COMPTER LE NOMBRE TOTAL DE PROJETS (pour la pagination)
-    // ==========================================
-    $sqlCount = "SELECT COUNT(*) as total
-        FROM projet p
-        LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-        LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-        LEFT JOIN user u ON p.idUser = u.idUser
-        WHERE 1=1";
-
-    // Ajouter les mêmes filtres que pour la requête principale
-    $sqlCount .= Permissions::getProjectsWhereClause();
-
-    if (!empty($searchQuery)) {
-    $sqlCount .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sqlCount .= " AND p.etat = :etat";
-    }
-    if (!empty($filterMinistere)) {
-        $sqlCount .= " AND p.idMinistere = :ministere";
-    }
-    if (!empty($filterYear)) {
-        $sqlCount .= " AND YEAR(p.dateArrive) = :year";
-    }
-
-    $stmtCount = $db->prepare($sqlCount);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmtCount->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmtCount->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmtCount->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmtCount->execute();
-    $totalItems = $stmtCount->fetch(PDO::FETCH_ASSOC)['total'];
-    $totalPages = ceil($totalItems / $itemsPerPage);
-
-    // Requête principale (reste identique mais avec le filtre année)
-    // ...
-    if (!empty($filterYear)) {
-        $sql .= " AND YEAR(p.dateArrive) = :year";
-    }
-    // ...
-    if (!empty($filterYear)) {
-        $stmt->bindParam(':year', $filterYear);
-    }
-
-    // ==========================================
-    // REQUÊTE PRINCIPALE AVEC LIMIT
-    // ==========================================
-    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
-            CASE 
-                WHEN p.etat = 0 THEN 'بصدد الدرس'
-                WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                WHEN p.etat = 2 THEN 'الموافقة'
-                WHEN p.etat = 3 THEN 'عدم الموافقة'
-                ELSE 'غير معروف'
-            END as etatLib,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as cheminAccesMuqtarah,
-            (SELECT cheminAcces FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as cheminAccesTaqrir,
-            (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 11 LIMIT 1) as docTaqrirId
-            FROM projet p
-            LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-            LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-            LEFT JOIN user u ON p.idUser = u.idUser
-            WHERE 1=1";
-
-    $sql .= Permissions::getProjectsWhereClause();
-
-    if (!empty($searchQuery)) {
-        $sql .= " AND (p.sujet LIKE :search OR m.libMinistere LIKE :search OR e.libEtablissement LIKE :search)";
-    }
-    if (!empty($filterEtat)) {
-        $sql .= " AND p.etat = :etat";
-    }
-    
-    if (!empty($filterMinistere)) {
-        $sql .= " AND p.idMinistere = :ministere";
-    }
-
-    $sql .= " ORDER BY p.dateCreation DESC LIMIT :limit OFFSET :offset";
-
-    $stmt = $db->prepare($sql);
-
-    if (!empty($searchQuery)) {
-        $searchParam = "%{$searchQuery}%";
-        $stmt->bindParam(':search', $searchParam);
-    }
-    if (!empty($filterEtat)) {
-        $stmt->bindParam(':etat', $filterEtat);
-    }
-    if (!empty($filterMinistere)) {
-        $stmt->bindParam(':ministere', $filterMinistere);
-    }
-
-    $stmt->bindParam(':limit', $itemsPerPage, PDO::PARAM_INT);
-    $stmt->bindParam(':offset', $offset, PDO::PARAM_INT);
-
-    $stmt->execute();
-    $projets = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-
-    // ==========================================
-    // FONCTION POUR CONSTRUIRE L'URL DE PAGINATION
-    // ==========================================
-    function buildPaginationUrl($page) {
-        $params = $_GET;
-        $params['page'] = $page;
-        return 'projets.php?' . http_build_query($params);
-    }
-    
-    // Nombre d'éléments par page
-    if (isset($_GET['items_per_page']) && $_GET['items_per_page'] === 'all') {
-        // Si "الكل" est sélectionné, afficher tous les résultats
-        $itemsPerPage = 999999; // Un grand nombre
-        $showAll = true;
-    } else {
-        $itemsPerPage = isset($_GET['items_per_page']) ? min(100, max(10, intval($_GET['items_per_page']))) : 10;
-        $showAll = false;
-    }
-
-    // Page actuelle (par défaut 1)
-    $currentPage = isset($_GET['page']) ? max(1, intval($_GET['page'])) : 1;
-
-    // Calculer l'offset
-    $offset = ($currentPage - 1) * $itemsPerPage;
 ?>
 <!DOCTYPE html>
 <html lang="ar" dir="rtl">
@@ -531,28 +603,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     <title><?php echo $page_title; ?></title>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
-        .stats-summary {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 20px;
-            margin-bottom: 30px;
-        }
-        .stat-box {
-            background: white;
-            padding: 20px;
-            border-radius: 12px;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
-            text-align: center;
-        }
-        .stat-box .number {
-            font-size: 32px;
-            font-weight: bold;
-            margin-bottom: 8px;
-        }
-        .stat-box .label {
-            color: #666;
-            font-size: 14px;
-        }
         .filters-section {
             background: white;
             padding: 25px;
@@ -562,12 +612,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         }
         .filters-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); /* Ajusté pour 5 colonnes */
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
             gap: 20px;
             margin-bottom: 20px;
-        }
-        .filter-group {
-            position: relative;
         }
         .filter-group label {
             display: block;
@@ -582,13 +629,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             border-radius: 8px;
             font-size: 14px;
         }
-
         .filter-actions {
             display: flex;
             gap: 15px;
             justify-content: flex-end;
         }
-        
         .btn {
             padding: 12px 30px;
             border: none;
@@ -611,10 +656,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         .btn-success {
             background: #4caf50;
             color: white;
-        }
-        .btn-success:hover {
-            background: #45a049;
-            transform: translateY(-2px);
         }
         .projects-table {
             background: white;
@@ -641,16 +682,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         tbody tr:hover {
             background: #f8f9fa;
         }
-        .badge {
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: 600;
-        }
-        .badge-pending { background: #fff3cd; color: #856404; }
-        .badge-processing { background: #d1ecf1; color: #0c5460; }
-        .badge-approved { background: #d4edda; color: #155724; }
-        .badge-rejected { background: #f8d7da; color: #721c24; }
         .btn-action {
             padding: 6px 12px;
             border-radius: 6px;
@@ -658,8 +689,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             text-decoration: none;
             margin: 0 2px;
         }
-        .btn-view { background: #17a2b8; color: white; }
-        .btn-edit { background: #ffc107; color: #333; }
+        .btn-view { background: #ffffff; color: black; }
+        .btn-update { background: #df7e38; color: white; }
         .btn-delete { background: #dc3545; color: white; }
 
         /* MODAL */
@@ -678,10 +709,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             display: block !important;
             animation: fadeIn 0.3s;
         }
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
         .modal-content {
             background-color: white;
             margin: 2% auto;
@@ -689,19 +716,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             width: 90%;
             max-width: 900px;
             box-shadow: 0 10px 50px rgba(0,0,0,0.5);
-            animation: slideDown 0.4s;
             max-height: 95vh;
             overflow-y: auto;
-        }
-        @keyframes slideDown {
-            from {
-                transform: translateY(-100px);
-                opacity: 0;
-            }
-            to {
-                transform: translateY(0);
-                opacity: 1;
-            }
         }
         .modal-header {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -712,41 +728,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             justify-content: space-between;
             align-items: center;
         }
-        .modal-header h2 {
-            margin: 0;
-            font-size: 24px;
-        }
         .close {
             color: white;
             font-size: 35px;
             font-weight: bold;
             cursor: pointer;
             line-height: 1;
-            transition: transform 0.3s;
-        }
-        .close:hover {
-            transform: scale(1.2);
         }
         .modal-body {
             padding: 30px;
         }
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 20px;
-            margin-bottom: 20px;
-        }
         .form-group-full {
-            grid-column: 1 / -1;
-        }
-        .form-group label {
-            display: block;
-            margin-bottom: 8px;
-            font-weight: 600;
-            color: #333;
-        }
-        .form-group label .required {
-            color: #dc3545;
+            margin-bottom: 20px;
         }
         .form-control {
             width: 100%;
@@ -754,155 +747,61 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             border: 2px solid #e0e0e0;
             border-radius: 8px;
             font-size: 14px;
-            transition: border-color 0.3s;
             font-family: inherit;
         }
-        .form-control:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        .lots-table {
+            width: 100%;
+            margin-top: 20px;
+            border-collapse: collapse;
         }
-        textarea.form-control {
-            resize: vertical;
-            min-height: 100px;
+        .lots-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
         }
-        .modal-footer {
-            padding: 20px 30px;
-            border-top: 1px solid #e0e0e0;
-            display: flex;
-            gap: 15px;
-            justify-content: center;
-        }
-        .info-box {
-            background: #e7f3ff;
-            border-right: 4px solid #2196F3;
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-            color: #1565C0;
-        }
-        .alert {
-            padding: 12px 16px;
-            border-radius: 8px;
-            margin-bottom: 20px;
-            font-size: 14px;
-        }
-        .alert-success {
-            background: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .alert-error {
-            background: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-        @media (max-width: 768px) {
-            .form-grid {
-                grid-template-columns: 1fr;
-            }
-        }
-        .pagination-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-top: 30px;
-            padding: 20px;
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 3px 10px rgba(0,0,0,0.08);
-        }
-
-        .pagination-info {
-            color: #666;
-            font-size: 14px;
-        }
-
-        .pagination {
-            display: flex;
-            gap: 8px;
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        .pagination li {
-            display: inline-block;
-        }
-
-        .pagination a,
-        .pagination span {
-            display: inline-block;
-            padding: 10px 16px;
-            border-radius: 8px;
-            text-decoration: none;
-            color: #333;
-            background: #f5f7fa;
-            transition: all 0.3s;
-            font-weight: 500;
-            min-width: 44px;
+        .lots-table th {
+            padding: 12px;
             text-align: center;
         }
-
-        .pagination a:hover {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .lots-table td {
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+        }
+        .btn-add-lot {
+            background: #28a745;
             color: white;
-            transform: translateY(-2px);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
         }
-
-        .pagination .active span {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        .btn-remove-lot {
+            background: #dc3545;
             color: white;
-            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+            border: none;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
         }
-
-        .pagination .disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            pointer-events: none;
-        }
-
-        .pagination .dots {
-            padding: 10px 8px;
-            background: transparent;
-            color: #999;
-        }
-
-        @media (max-width: 768px) {
-            .pagination-container {
-                flex-direction: column;
-                gap: 15px;
-            }
-            
-            .pagination {
-                flex-wrap: wrap;
-                justify-content: center;
-            }
-        }
-        
+        .required { color: #dc3545; }
     </style>
 </head>
 <body>
-    
     <?php include 'includes/header.php'; ?>
+    
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
             <h2 class="section-title">قائمة الصفقات</h2>
-             <div class="filters-section">
+            
+            <div class="filters-section">
                 <form method="GET">
                     <div class="filters-grid">
-                        <!-- Recherche -->
                         <div class="filter-group">
                             <label>البحث</label>
-                            <input type="text" name="search" placeholder="ابحث عن مقترح..." value="<?php echo htmlspecialchars($searchQuery); ?>">
+                            <input type="text" name="search" placeholder="ابحث عن صفقة..." 
+                                   value="<?php echo htmlspecialchars($searchQuery); ?>">
                         </div>
                         
-                        <!-- الوزارة -->
                         <div class="filter-group">
                             <label>الوزارة</label>
                             <select name="ministere">
@@ -915,483 +814,240 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 <?php endforeach; ?>
                             </select>
                         </div>
-                        
-                        <!-- المؤسسات -->
-                        <div class="filter-group">
-                            <label>المؤسسات</label>
-                            <select name="ministere">
-                                <option value="">جميع المؤسسات</option>
-                                <option value=""> </option>
-                            </select>
-                        </div>
-                        
-                        <!-- الحالة -->
-                        <div class="filter-group">
-                            <label>الحالة</label>
-                            <select name="etat">
-                                <option value="">جميع الحالات</option>
-                                <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
-                                <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
-                                <option value="2" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الموافقة</option>
-                                <option value="3" <?php echo $filterEtat === '3' ? 'selected' : ''; ?>>عدم الموافقة</option>
-                            </select>
-                        </div>
-                        
-                        <!-- ✨ : السنة -->
-                        <div class="filter-group">
-                            <label>السنة</label>
-                            <select name="year">
-                                <option value="">جميع السنوات</option>
-                                <?php foreach ($years as $year): ?>
-                                    <option value="<?php echo $year['year']; ?>" 
-                                            <?php echo $filterYear == $year['year'] ? 'selected' : ''; ?>>
-                                        <?php echo $year['year']; ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
                     </div>
                     
                     <div class="filter-actions">
                         <button type="submit" class="btn btn-primary">🔍 بحث</button>
-                        <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
+                        <a href="appels_d_offres.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
                         <?php if (Permissions::canCreateProjet()): ?>
-                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة صفقة </button>
+                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة صفقة</button>
                         <?php endif; ?>
                     </div>
                 </form>
             </div>
+            
             <div class="projects-table">
-                <?php if (count($projets) > 0): ?>
+                <?php if (count($appelsOffres) > 0): ?>
                     <table>
                         <thead>
                             <tr>
-                                <th>عدد الجلسة</th>
-                                <th>تاريخ الجلسة</th>
-                                <th>المقترحات المعروضة</th>
-                                <th>نوعية المقترح</th>
-                                <th>محضر الجلسة</th>
-                                <th>قرار اللجنة</th>
+                                <th style="width: 40%;">المشروع</th>
+                                <th>الوزارة</th>
+                                <th>عدد الأقساط</th>
+                                <th>المبلغ الإجمالي</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
                         <tbody>
+                            <?php foreach ($appelsOffres as $ao):?>
                             <tr>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
-                                <td></td>
+                                <td><?php echo htmlspecialchars($ao['projetSujet']);?></td>
+                                <td><?php echo htmlspecialchars($ao['libMinistere']); ?></td>
+                                <td><?php echo $ao['nombreLots']; ?></td>
+                                <td><?php echo number_format($ao['montantTotal'], 2); ?> دينار</td>
                                 <td>
-                                    <a href="modifier_commission.php?id=" class="btn-action btn-edit">تعديل</a>
-                                    <a href="#" class="btn-action btn-delete" onclick="return confirm('هل أنت متأكد من حذف هذا المقترح؟');">حذف</a>
+                                    <button type="button" 
+                                            class="btn-action btn-success" ><a href="details_appel_offre.php?id=<?php echo $ao['idApp']; ?>" 
+                                    class="btn-action btn-success"> عرض</a>
+                                    </button>
+
+                                    
+                                    <?php if (Permissions::canEditProjet($ao['idUser'] ?? 0)): ?>
+                                        <button type="button" 
+                                                class="btn-action btn-update" 
+                                                onclick="openEditAppelOffreModal(<?php echo $ao['idApp']; ?>)">
+                                            ✏️ تعديل
+                                        </button>
+                                        
+                                        <button type="button" 
+                                                class="btn-action btn-delete" 
+                                                onclick="openDeleteAppelOffreModal(<?php echo $ao['idApp']; ?>, '<?php echo htmlspecialchars($ao['projetSujet'], ENT_QUOTES); ?>')">
+                                            🗑️ حذف
+                                        </button>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
+                            <?php   endforeach; ?>
                         </tbody>
                     </table>
                 <?php else: ?>
-                    <p style="text-align: center; padding: 40px; color: #666;">لا توجد مقترحات</p>
+                    <p style="text-align: center; padding: 40px; color: #666;">لا توجد صفقات</p>
                 <?php endif; ?>
             </div>
-            <?php if ($totalPages > 1): ?>
-                <div class="pagination-container">
-                    <div class="pagination-info">
-                        عرض <?php echo (($currentPage - 1) * $itemsPerPage) + 1; ?> - 
-                        <?php echo min($currentPage * $itemsPerPage, $totalItems); ?> 
-                        من أصل <?php echo $totalItems; ?> مقترح
-                    </div>
-                    
-                    <ul class="pagination">
-                        <!-- Bouton Précédent -->
-                        <li class="<?php echo $currentPage <= 1 ? 'disabled' : ''; ?>">
-                            <?php if ($currentPage > 1): ?>
-                                <a href="<?php echo buildPaginationUrl($currentPage - 1); ?>">« السابق</a>
-                            <?php else: ?>
-                                <span>« السابق</span>
-                            <?php endif; ?>
-                        </li>
-                        
-                        <?php
-                        // Logique d'affichage des numéros de page
-                        $range = 2; // Nombre de pages à afficher de chaque côté
-                        
-                        // Première page
-                        if ($currentPage > $range + 1) {
-                            echo '<li><a href="' . buildPaginationUrl(1) . '">1</a></li>';
-                            if ($currentPage > $range + 2) {
-                                echo '<li><span class="dots">...</span></li>';
-                            }
-                        }
-                        
-                        // Pages autour de la page actuelle
-                        for ($i = max(1, $currentPage - $range); $i <= min($totalPages, $currentPage + $range); $i++) {
-                            if ($i == $currentPage) {
-                                echo '<li class="active"><span>' . $i . '</span></li>';
-                            } else {
-                                echo '<li><a href="' . buildPaginationUrl($i) . '">' . $i . '</a></li>';
-                            }
-                        }
-                        
-                        // Dernière page
-                        if ($currentPage < $totalPages - $range) {
-                            if ($currentPage < $totalPages - $range - 1) {
-                                echo '<li><span class="dots">...</span></li>';
-                            }
-                            echo '<li><a href="' . buildPaginationUrl($totalPages) . '">' . $totalPages . '</a></li>';
-                        }
-                        ?>
-                        
-                        <!-- Bouton Suivant -->
-                        <li class="<?php echo $currentPage >= $totalPages ? 'disabled' : ''; ?>">
-                            <?php if ($currentPage < $totalPages): ?>
-                                <a href="<?php echo buildPaginationUrl($currentPage + 1); ?>">التالي »</a>
-                            <?php else: ?>
-                                <span>التالي »</span>
-                            <?php endif; ?>
-                        </li>
-                    </ul>
-                </div>
-                <?php endif; ?>
-
-                <!-- ==========================================
-                    OPTION: Sélecteur du nombre d'éléments par page
-                    ========================================== -->
-                <!-- REMPLACER toute la section "items-per-page" par: -->
-                <div class="items-per-page" style="margin-top: 15px; text-align: center;">
-                    <label style="color: #666; font-size: 14px; margin-left: 10px;">عدد المقترحات في الصفحة:</label>
-                    <select id="itemsPerPageSelect" style="padding: 8px 12px; border: 2px solid #e0e0e0; border-radius: 6px; font-size: 14px;">
-                        <option value="all">الكل</option>
-                        <option value="10" <?php echo (!isset($_GET['items_per_page']) || $_GET['items_per_page'] == 10) ? 'selected' : ''; ?>>10</option>
-                        <option value="25" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 25) ? 'selected' : ''; ?>>25</option>
-                        <option value="50" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 50) ? 'selected' : ''; ?>>50</option>
-                        <option value="100" <?php echo (isset($_GET['items_per_page']) && $_GET['items_per_page'] == 100) ? 'selected' : ''; ?>>100</option>
-                    </select>
-                </div>
         </div>
     </section>
 
-    <!-- MODAL -->
-    <div id="addProjetModal" class="modal">
+    <!--  MODAL addAppelOffreModal -->
+    <div id="addAppelOffreModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>➕ إضافة مقترح جديد</h2>
+                <h2>إضافة صفقة جديدة</h2>
                 <span class="close" id="btnCloseModal">&times;</span>
             </div>
             <div class="modal-body">
-                <div id="modalAlert"></div>    
-                <form id="addProjetForm" enctype="multipart/form-data">
+                <div id="modalAlert"></div>
+                
+                <form id="addAppelOffreForm" enctype="multipart/form-data">
                     <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                    <input type="hidden" name="action" value="add_projet">
+                    <input type="hidden" name="action" value="add_appel_offre">
                     
-                    <div class="form-grid">
-                        <!-- 1. الموضوع -->
-                        <div class="form-group form-group-full">
-                            <label>الموضوع <span class="required">*</span></label>
-                            <textarea name="sujet" class="form-control" required 
-                                      placeholder=" موضوع المقترح ..."></textarea>
+                    <div class="form-group-full">
+                        <label>المشروع <span class="required">*</span></label>
+                        <select name="idpro" id="idpro" class="form-control" required>
+                            <option value="">-- اختر المشروع --</option>
+                            <?php foreach ($projetsDisponibles as $projet): ?>
+                                <option value="<?php echo $projet['idPro']; ?>">
+                                    <?php echo htmlspecialchars($projet['sujet']); ?>
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="form-group-full">
+                        <label>ملف الإسناد (PDF, Word, Excel) <span class="required">*</span></label>
+                        <input type="file" name="fichier" id="fichier" class="form-control" 
+                               accept=".pdf,.doc,.docx,.xls,.xlsx" required>
+                        <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                            الحجم الأقصى: 10MB - الأنواع المقبولة: PDF, Word, Excel
+                        </small>
+                    </div>
+
+                    <div class="lots-section">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                            <h3>📦 الصفقات</h3>
+                            <button type="button" class="btn-add-lot" id="btnAddLot">➕ إضافة صفقة</button>
                         </div>
-                        
-                        <!-- 2. الوزارة -->
-                        <div class="form-group">
-                            <label>الوزارة <span class="required">*</span></label>
-                            <select name="idMinistere" id="modalMinistere" class="form-control" required>
-                                <option value="">-- اختر الوزارة --</option>
-                                <?php foreach ($ministeres as $min): ?>
-                                    <option value="<?php echo $min['idMinistere']; ?>">
-                                        <?php echo htmlspecialchars($min['libMinistere']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <!-- 3. المؤسسة -->
-                        <div class="form-group">
-                            <label>المؤسسة <span class="required">*</span></label>
-                            <select name="idEtab" id="modalEtab" class="form-control" required>
-                                <option value="">--أختر الوزارة --</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 4. تاريخ الإعلام -->
-                        <div class="form-group">
-                            <label> تاريخ التعهد <span class="required">*</span></label>
-                            <input type="date" name="dateArrive" class="form-control" required 
-                                   value="<?php echo date('Y-m-d'); ?>">
-                        </div>
-                        
-                        <!-- 5. الإجراء -->
-                        <div class="form-group">
-                            <label>صيغة المشروع <span class="required">*</span></label>
-                            <select name="procedurePro" class="form-control" required>
-                                <option value="">-- اختر الصيغة --</option>
-                                <option value="جديد"> مشروع جديد </option>
-                                <option value="بصدد الإنجاز">بصدد الإنجاز</option>
-                            </select>
-                        </div>
-                        
-                        <!-- 6. الكلفة -->
-                        <div class="form-group form-group-full">
-                            <label>الكلفة التقديرية (د.ت) <span class="required">*</span></label>
-                            <input type="number" name="cout" class="form-control" required 
-                                   step="0.01" min="0" placeholder="0.00">
-                        </div>
-                        
-                        <!-- 7. المقترح -->
-                        <div class="form-group form-group-full">
-                            <label>المقترح <span class="required">*</span></label>
-                            <textarea name="proposition" class="form-control" required 
-                                      placeholder="أدخل تفاصيل المقترح والتوصيات..."></textarea>
-                        </div>
-                        
-                        <!-- 8. المقرر -->
-                        <div class="form-group">
-                            <label>المقرر (الإداري/المقرر) <span class="required">*</span></label>
-                            <select name="idRapporteur" class="form-control" required>
-                                <option value="">-- اختر المقرر --</option>
-                                <?php foreach ($rapporteurs as $rapp): ?>
-                                    <option value="<?php echo $rapp['idUser']; ?>"
-                                            <?php echo ($rapp['idUser'] == $_SESSION['user_id']) ? 'selected' : ''; ?>>
-                                        <?php echo htmlspecialchars($rapp['nomUser']); ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                        </div>
-                        
-                        <!-- 9. عنوان الملف -->
-                        <div class="form-group">
-                            <label>عنوان المقترح <span class="required">*</span></label>
-                            <input type="text" name="libDoc" class="form-control" required 
-                                   placeholder="أدخل عنوان المقترح">
-                        </div>
-                        
-                        <!-- 10. الملف -->
-                        <div class="form-group form-group-full">
-                            <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
-                            <input type="file" name="fichier" id="fichier" class="form-control" 
-                                   accept=".pdf,.doc,.docx,.xls,.xlsx" required>
-                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                الحجم الأقصى: 5MB - الأنواع المقبولة: PDF, Word, Excel
-                            </small>
-                        </div>
+
+                        <table class="lots-table" id="lotsTable">
+                            <thead>
+                                <tr>
+                                    <th>الصفقة <span class="required">*</span></th>
+                                    <th>صاحب الصفقة <span class="required">*</span></th>
+                                    <th>المبلغ <span class="required">*</span></th>
+                                    <th>الإجراء</th>
+                                </tr>
+                            </thead>
+                            <tbody id="lotsTableBody"></tbody>
+                        </table>
                     </div>
                     
-                    <div class="modal-footer">
-                        <button type="submit" class="btn btn-success">✓ حفظ المقترح</button>
+                    <div style="margin-top: 20px; text-align: center;">
+                        <button type="submit" class="btn btn-success">✓ حفظ الصفقة</button>
                         <button type="button" class="btn btn-secondary" id="btnCancelModal">✕ إلغاء</button>
                     </div>
                 </form>
             </div>
         </div>
     </div>
-
-    <!-- MODAL AJOUT التقرير الرقابي -->
-    <div id="taqrirModal" class="modal">
+    
+    <!-- MODAL DE MODIFICATION -->
+    <div id="editAppelOffreModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>📊 إضافة التقرير الرقابي</h2>
-                <span class="close" id="btnCloseTaqrir">&times;</span>
+                <h2>✏️ تعديل الصفقة</h2>
+                <span class="close" onclick="closeEditAppelOffreModal()">&times;</span>
             </div>
-            <div class="modal-body">
-                <div id="taqrirAlert"></div>
-                
-                <form id="taqrirForm" enctype="multipart/form-data">
-                    <input type="hidden" name="csrf_token" value="<?php echo $csrf_token; ?>">
-                    <input type="hidden" name="action" value="upload_taqrir">
-                    <input type="hidden" name="projetId" id="taqrirProjetId">
-                    
-                    <div class="form-group">
-                        <label>عنوان التقرير <span class="required">*</span></label>
-                        <input type="text" name="libDoc" class="form-control" required 
-                               placeholder="أدخل عنوان التقرير الرقابي">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label>الملف (PDF, Word, Excel) <span class="required">*</span></label>
-                        <input type="file" name="fichier_taqrir" id="fichier_taqrir" class="form-control" 
-                               accept=".pdf,.doc,.docx,.xls,.xlsx" required>
-                        <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                            الحجم الأقصى: 5MB
-                        </small>
-                    </div>
-                    
-                    <div class="modal-footer">
-                        <button type="submit" class="btn btn-success">✓ رفع التقرير</button>
-                        <button type="button" class="btn btn-secondary" id="btnCancelTaqrir">✕ إلغاء</button>
-                    </div>
-                </form>
+            <div class="modal-body" id="editModalBody">
+                <!-- Contenu chargé dynamiquement -->
             </div>
         </div>
     </div>
 
+    <!-- MODAL DE SUPPRESSION -->
+    <div id="deleteAppelOffreModal" class="modal">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2>🗑️ حذف الصفقة</h2>
+                <span class="close" onclick="closeDeleteAppelOffreModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="deleteModalBody">
+                <!-- Contenu chargé dynamiquement -->
+            </div>
+        </div>
+    </div>
+
+
     <?php include 'includes/footer.php'; ?>
 
     <script>
-        // Variables globales
-        var modal = document.getElementById('addProjetModal');
-        var btnOpen = document.getElementById('btnOpenModal');
-        var btnClose = document.getElementById('btnCloseModal');
-        var btnCancel = document.getElementById('btnCancelModal');
-        
-        var taqrirModal = document.getElementById('taqrirModal');
-        var btnCloseTaqrir = document.getElementById('btnCloseTaqrir');
-        var btnCancelTaqrir = document.getElementById('btnCancelTaqrir');
-        
-        // Ouvrir modal التقرير الرقابي
-        function openTaqrirModal(projetId) {
-            document.getElementById('taqrirProjetId').value = projetId;
-            taqrirModal.classList.add('show');
-            document.body.style.overflow = 'hidden';
-        }
-        
-        // Fermer modal التقرير الرقابي
-        function closeTaqrirModal() {
-            taqrirModal.classList.remove('show');
-            document.body.style.overflow = 'auto';
-            document.getElementById('taqrirForm').reset();
-            document.getElementById('taqrirAlert').innerHTML = '';
-        }
-        
-        if (btnCloseTaqrir) {
-            btnCloseTaqrir.onclick = closeTaqrirModal;
-        }
-        
-        if (btnCancelTaqrir) {
-            btnCancelTaqrir.onclick = closeTaqrirModal;
-        }
-        
-        // Soumettre التقرير الرقابي
-        document.getElementById('taqrirForm').onsubmit = function(e) {
-            e.preventDefault();
-            
-            var formData = new FormData(this);
-            var alertDiv = document.getElementById('taqrirAlert');
-            
-            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #ff9800; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الرفع...</p></div>';
-            
-            fetch('projets.php', {
-                method: 'POST',
-                body: formData
-            })
-            .then(response => response.json())
-            .then(data => {
+        let lotCounter = 0;
+        let fournisseurs = [];
+        const modal = document.getElementById('addAppelOffreModal');
+
+        // Charger les fournisseurs
+        async function loadFournisseurs() {
+            try {
+                const response = await fetch('get_fournisseurs.php');
+                const data = await response.json();
                 if (data.success) {
-                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
-                } else {
-                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                    fournisseurs = data.fournisseurs;
                 }
-            })
-            .catch(function(error) {
-                console.error('Error:', error);
-                alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
-            });
-        };
-        
-        // Validation fichier التقرير الرقابي
-        document.getElementById('fichier_taqrir').onchange = function() {
-            var file = this.files[0];
-            if (file) {
-                var fileSize = file.size / 1024 / 1024;
-                var allowedTypes = ['application/pdf', 'application/msword', 
-                                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                   'application/vnd.ms-excel',
-                                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
-                
-                if (fileSize > 10) {
-                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
-                    this.value = '';
-                    return false;
-                }
-                
-                if (!allowedTypes.includes(file.type)) {
-                    alert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel');
-                    this.value = '';
-                    return false;
-                }
-            }
-        };
-        
-        // Ouvrir le modal ajout projet
-        if (btnOpen) {
-            btnOpen.onclick = function() {
-                modal.classList.add('show');
-                document.body.style.overflow = 'hidden';
+            } catch (error) {
+                console.error('Erreur:', error);
             }
         }
-        
-        // Fermer le modal ajout projet
+
+        function createFournisseurOptions() {
+            let options = '<option value="">-- اختر صاحب الصفقة --</option>';
+            fournisseurs.forEach(f => {
+                options += `<option value="${f.idFournisseur}">${f.nomFournisseur}</option>`;
+            });
+            return options;
+        }
+
+        function addLotRow() {
+            lotCounter++;
+            const tbody = document.getElementById('lotsTableBody');
+            const row = document.createElement('tr');
+            row.id = `lot-row-${lotCounter}`;
+            row.innerHTML = `
+                <td><input type="text" name="lots[${lotCounter}][sujetLot]" class="form-control" placeholder="موضوع الصفقة" required></td>
+                <td><select name="lots[${lotCounter}][idFournisseur]" class="form-control" required>${createFournisseurOptions()}</select></td>
+                <td><input type="number" name="lots[${lotCounter}][somme]" class="form-control" step="0.01" min="0" placeholder="0.00" required></td>
+                <td><button type="button" class="btn-remove-lot" onclick="removeLotRow(${lotCounter})">🗑️</button></td>
+            `;
+            tbody.appendChild(row);
+        }
+
+        function removeLotRow(id) {
+            const row = document.getElementById(`lot-row-${id}`);
+            if (row && document.querySelectorAll('#lotsTableBody tr').length > 1) {
+                row.remove();
+            } else {
+                alert('يجب أن تحتفظ بصفقة واحدة على الأقل');
+            }
+        }
+
+        // Ouvrir le modal
+        document.getElementById('btnOpenModal').onclick = function() {
+            modal.classList.add('show');
+            loadFournisseurs().then(() => addLotRow());
+        }
+
+        // Fermer le modal
         function fermerModal() {
             modal.classList.remove('show');
-            document.body.style.overflow = 'auto';
-            document.getElementById('addProjetForm').reset();
-            document.getElementById('modalEtab').disabled = true;
-            document.getElementById('modalAlert').innerHTML = '';
+            document.getElementById('addAppelOffreForm').reset();
+            document.getElementById('lotsTableBody').innerHTML = '';
+            lotCounter = 0;
         }
-        
-        if (btnClose) {
-            btnClose.onclick = fermerModal;
-        }
-        if (btnCancel) {
-            btnCancel.onclick = fermerModal;
-        }
-        
-        // Fermer en cliquant à l'extérieur
-        window.onclick = function(event) {
-            if (event.target == modal) {
-                fermerModal();
-            }
-            if (event.target == taqrirModal) {
-                closeTaqrirModal();
-            }
-        }
-        
-        // Charger les établissements
-        document.getElementById('modalMinistere').onchange = function() {
-            var ministereId = this.value;
-            var etabSelect = document.getElementById('modalEtab');
-            
-            etabSelect.innerHTML = '<option value="">جاري التحميل...</option>';
-            
-            if (ministereId) {
-                fetch('get_etablissements.php?ministere=' + ministereId)
-                    .then(response => response.json())
-                    .then(data => {
-                        if (data.success && data.etablissements.length > 0) {
-                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                            data.etablissements.forEach(function(etab) {
-                                var option = document.createElement('option');
-                                option.value = etab.idEtablissement;
-                                option.textContent = etab.libEtablissement;
-                                etabSelect.appendChild(option);
-                            });
-                        } else {
-                            etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                        }
-                    })
-                    .catch(function(error) {
-                        console.error('Error:', error);
-                        etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-                    });
-            } else {
-                etabSelect.innerHTML = '<option value="">-- الوزارة --</option>';
-            }
-        };
-        
+
+        document.getElementById('btnCloseModal').onclick = fermerModal;
+        document.getElementById('btnCancelModal').onclick = fermerModal;
+        document.getElementById('btnAddLot').addEventListener('click', addLotRow);
+
         // Validation du fichier
         document.getElementById('fichier').onchange = function() {
             var file = this.files[0];
             if (file) {
                 var fileSize = file.size / 1024 / 1024; // En MB
                 var allowedTypes = ['application/pdf', 'application/msword', 
-                                   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-                                   'application/vnd.ms-excel',
-                                   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+                                'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                                'application/vnd.ms-excel',
+                                'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
                 if (fileSize > 10) {
-                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
+                    alert('حجم الملف يجب أن يكون أقل من 10 ميغابايت');
                     this.value = '';
                     return false;
                 }
@@ -1403,50 +1059,620 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                 }
             }
         };
-        
-        // Soumettre le formulaire
-        document.getElementById('addProjetForm').onsubmit = function(e) {
+
+        // Soumission du formulaire
+        document.getElementById('addAppelOffreForm').onsubmit = function(e) {
             e.preventDefault();
             
-            var formData = new FormData(this);
-            var alertDiv = document.getElementById('modalAlert');
+            const formData = new FormData(this);
+            const alertDiv = document.getElementById('modalAlert');
             
-            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;"><div style="display: inline-block; border: 3px solid #f3f3f3; border-top: 3px solid #667eea; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite;"></div><p style="margin-top: 10px;">جاري الحفظ...</p></div>';
+            alertDiv.innerHTML = '<div style="text-align: center; padding: 15px;">جاري الحفظ...</div>';
             
-            fetch('projets.php', {
+            fetch('appels_d_offres.php', {
                 method: 'POST',
                 body: formData
             })
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
+                    alertDiv.innerHTML = '<div style="background: #d4edda; color: #155724; padding: 12px; border-radius: 8px;">✓ ' + data.message + '</div>';
+                    setTimeout(() => window.location.reload(), 1500);
                 } else {
-                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                    alertDiv.innerHTML = '<div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px;">✕ ' + data.message + '</div>';
                 }
             })
-            .catch(function(error) {
+            .catch(error => {
                 console.error('Error:', error);
-                alertDiv.innerHTML = '<div class="alert alert-error">✕ حدث خطأ في الاتصال</div>';
+                alertDiv.innerHTML = '<div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px;">✕ حدث خطأ في الاتصال</div>';
             });
         };
-        // REMPLACER la fonction de changement d'éléments par page:
-        document.getElementById('itemsPerPageSelect')?.addEventListener('change', function() {
-            var params = new URLSearchParams(window.location.search);
-            
-            if (this.value === 'all') {
-                params.set('items_per_page', 'all');
+
+        document.addEventListener('DOMContentLoaded', loadFournisseurs);
+
+        // ================================================================
+// FONCTION POUR OUVRIR LE MODAL DE MODIFICATION D'APPEL D'OFFRE
+// ================================================================
+
+/**
+ * Ouvre le modal de modification et charge les données de l'appel d'offre
+ * @param {number} idAppel - ID de l'appel d'offre à modifier
+ */
+function openEditAppelOffreModal(idAppel) {
+    // Afficher le modal
+    const modal = document.getElementById('editAppelOffreModal');
+    modal.classList.add('show');
+    modal.style.display = 'flex';
+    
+    // Afficher un loader pendant le chargement
+    const modalBody = document.getElementById('editModalBody');
+    modalBody.innerHTML = `
+        <div style="text-align: center; padding: 40px;">
+            <div class="loader" style="margin: 0 auto 20px;"></div>
+            <p>جاري تحميل البيانات...</p>
+        </div>
+    `;
+    
+    // Charger les données de l'appel d'offre via AJAX
+    fetch(`get_appel_offre_data.php?id=${idAppel}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // Remplir le formulaire avec les données
+                renderEditForm(data.appelOffre, data.lots, data.projets, data.fournisseurs);
             } else {
-                params.set('items_per_page', this.value);
+                showEditError(data.message || 'حدث خطأ في تحميل البيانات');
             }
-            
-            params.delete('page'); // Revenir à la première page
-            window.location.href = 'projets.php?' + params.toString();
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            showEditError('حدث خطأ في الاتصال بالخادم');
         });
+}
+
+/**
+ * Affiche le formulaire de modification avec les données chargées
+ */
+function renderEditForm(appelOffre, lots, projets, fournisseurs) {
+    const modalBody = document.getElementById('editModalBody');
+    
+    // Stocker les fournisseurs globalement pour l'ajout de lots
+    window.editFournisseurs = fournisseurs;
+    
+    modalBody.innerHTML = `
+        <div id="editModalAlert"></div>
         
+        <form id="editAppelOffreForm" enctype="multipart/form-data">
+            <input type="hidden" name="csrf_token" value="${document.querySelector('[name="csrf_token"]').value}">
+            <input type="hidden" name="action" value="update_appel_offre">
+            <input type="hidden" name="idApp" id="editIdApp" value="${appelOffre.idApp}">
+            
+            <!-- SECTION PROJET -->
+            <div class="form-group-full">
+                <label>المشروع <span class="required">*</span></label>
+                <select name="idpro" id="editIdPro" class="form-control" required>
+                    <option value="">-- اختر المشروع --</option>
+                    ${projets.map(p => `
+                        <option value="${p.idPro}" ${p.idPro == appelOffre.idPro ? 'selected' : ''}>
+                            ${escapeHtml(p.sujet)}
+                        </option>
+                    `).join('')}
+                </select>
+            </div>
+
+            <!-- SECTION FICHIER -->
+            <div class="form-group-full">
+                <label>ملف الإسناد (اختياري - اترك فارغاً للاحتفاظ بالملف الحالي)</label>
+                <input type="file" name="fichier" id="editFichier" class="form-control" 
+                       accept=".pdf,.doc,.docx,.xls,.xlsx">
+                <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                    الحجم الأقصى: 10MB - الأنواع المقبولة: PDF, Word, Excel
+                </small>
+                ${appelOffre.documentPath ? `
+                    <div style="margin-top: 10px; padding: 10px; background: #f0f0f0; border-radius: 6px;">
+                        <strong>الملف الحالي:</strong> 
+                        <a href="${appelOffre.documentPath}" target="_blank" style="color: #667eea;">
+                            📄 عرض الملف
+                        </a>
+                    </div>
+                ` : ''}
+            </div>
+
+            <!-- SECTION LOTS -->
+            <div class="lots-section">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3>📦 الصفقات</h3>
+                    <button type="button" class="btn-add-lot" onclick="addEditLotRow()">
+                        ➕ إضافة صفقة
+                    </button>
+                </div>
+
+                <table class="lots-table">
+                    <thead>
+                        <tr>
+                            <th>الصفقة <span class="required">*</span></th>
+                            <th>صاحب الصفقة <span class="required">*</span></th>
+                            <th>المبلغ <span class="required">*</span></th>
+                            <th>الإجراء</th>
+                        </tr>
+                    </thead>
+                    <tbody id="editLotsTableBody">
+                        ${renderEditLots(lots, fournisseurs)}
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- BOUTONS D'ACTION -->
+            <div style="margin-top: 30px; text-align: center;">
+                <button type="submit" class="btn btn-success" style="min-width: 150px;">
+                    ✓ حفظ التعديلات
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeEditAppelOffreModal()" 
+                        style="min-width: 150px;">
+                    ✕ إلغاء
+                </button>
+            </div>
+        </form>
+    `;
+    
+    // Initialiser le compteur de lots
+    window.editLotCounter = lots.length;
+    
+    // Attacher l'événement de soumission du formulaire
+    document.getElementById('editAppelOffreForm').addEventListener('submit', handleEditFormSubmit);
+    
+    // Attacher la validation du fichier
+    document.getElementById('editFichier').addEventListener('change', validateEditFile);
+}
+
+/**
+ * Génère le HTML des lignes de lots pour le formulaire d'édition
+ */
+function renderEditLots(lots, fournisseurs) {
+    return lots.map((lot, index) => `
+        <tr id="edit-lot-row-${index}">
+            <td>
+                <input type="text" 
+                       name="lots[${index}][sujetLot]" 
+                       class="form-control" 
+                       value="${escapeHtml(lot.sujetLot)}" 
+                       placeholder="موضوع الصفقة" 
+                       required>
+            </td>
+            <td>
+                <select name="lots[${index}][idFournisseur]" class="form-control" required>
+                    <option value="">-- اختر صاحب الصفقة --</option>
+                    ${fournisseurs.map(f => `
+                        <option value="${f.idFournisseur}" ${f.idFournisseur == lot.idFournisseur ? 'selected' : ''}>
+                            ${escapeHtml(f.nomFournisseur)}
+                        </option>
+                    `).join('')}
+                </select>
+            </td>
+            <td>
+                <input type="number" 
+                       name="lots[${index}][somme]" 
+                       class="form-control" 
+                       value="${lot.somme}" 
+                       step="0.01" 
+                       min="0" 
+                       placeholder="0.00" 
+                       required>
+            </td>
+            <td>
+                <button type="button" 
+                        class="btn-remove-lot" 
+                        onclick="removeEditLotRow(${index})"
+                        ${lots.length === 1 ? 'disabled' : ''}>
+                    🗑️
+                </button>
+            </td>
+        </tr>
+    `).join('');
+}
+
+/**
+ * Ajoute une nouvelle ligne de lot dans le formulaire d'édition
+ */
+function addEditLotRow() {
+    window.editLotCounter = window.editLotCounter || 0;
+    window.editLotCounter++;
+    
+    const tbody = document.getElementById('editLotsTableBody');
+    const rowId = `edit-lot-row-${window.editLotCounter}`;
+    
+    const fournisseurOptions = window.editFournisseurs.map(f => `
+        <option value="${f.idFournisseur}">${escapeHtml(f.nomFournisseur)}</option>
+    `).join('');
+    
+    const newRow = document.createElement('tr');
+    newRow.id = rowId;
+    newRow.innerHTML = `
+        <td>
+            <input type="text" 
+                   name="lots[${window.editLotCounter}][sujetLot]" 
+                   class="form-control" 
+                   placeholder="موضوع الصفقة" 
+                   required>
+        </td>
+        <td>
+            <select name="lots[${window.editLotCounter}][idFournisseur]" class="form-control" required>
+                <option value="">-- اختر صاحب الصفقة --</option>
+                ${fournisseurOptions}
+            </select>
+        </td>
+        <td>
+            <input type="number" 
+                   name="lots[${window.editLotCounter}][somme]" 
+                   class="form-control" 
+                   step="0.01" 
+                   min="0" 
+                   placeholder="0.00" 
+                   required>
+        </td>
+        <td>
+            <button type="button" 
+                    class="btn-remove-lot" 
+                    onclick="removeEditLotRow(${window.editLotCounter})">
+                🗑️
+            </button>
+        </td>
+    `;
+    
+    tbody.appendChild(newRow);
+}
+
+/**
+ * Supprime une ligne de lot du formulaire d'édition
+ */
+function removeEditLotRow(rowId) {
+    const row = document.getElementById(`edit-lot-row-${rowId}`);
+    const tbody = document.getElementById('editLotsTableBody');
+    
+    // Vérifier qu'il reste au moins un lot
+    if (tbody.children.length <= 1) {
+        showEditAlert('يجب أن تحتوي الصفقة على قسط واحد على الأقل', 'warning');
+        return;
+    }
+    
+    if (row) {
+        row.remove();
+    }
+}
+
+/**
+ * Gère la soumission du formulaire de modification
+ */
+function handleEditFormSubmit(e) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const formData = new FormData(form);
+    const alertDiv = document.getElementById('editModalAlert');
+    
+    // Désactiver le bouton de soumission
+    const submitBtn = form.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '⏳ جاري الحفظ...';
+    
+    // Afficher un message de chargement
+    alertDiv.innerHTML = `
+        <div style="background: #d1ecf1; color: #0c5460; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+            جاري حفظ التعديلات...
+        </div>
+    `;
+    
+    // Envoyer les données
+    fetch('appels_d_offres.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Afficher un message de succès
+            alertDiv.innerHTML = `
+                <div style="background: #d4edda; color: #155724; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                    ✓ ${data.message}
+                </div>
+            `;
+            
+            // Recharger la page après 1.5 secondes
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        } else {
+            // Afficher le message d'erreur
+            alertDiv.innerHTML = `
+                <div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                    ✕ ${data.message}
+                </div>
+            `;
+            
+            // Réactiver le bouton
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = originalText;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alertDiv.innerHTML = `
+            <div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                ✕ حدث خطأ في الاتصال بالخادم
+            </div>
+        `;
+        
+        // Réactiver le bouton
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalText;
+    });
+}
+
+/**
+ * Valide le fichier uploadé
+ */
+function validateEditFile(e) {
+    const file = e.target.files[0];
+    
+    if (!file) return;
+    
+    // Vérifier la taille (max 10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB en bytes
+    if (file.size > maxSize) {
+        showEditAlert('حجم الملف يجب أن يكون أقل من 10 ميغابايت', 'error');
+        e.target.value = '';
+        return false;
+    }
+    
+    // Vérifier le type de fichier
+    const allowedTypes = [
+        'application/pdf',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    if (!allowedTypes.includes(file.type)) {
+        showEditAlert('نوع الملف غير مقبول. يرجى اختيار ملف PDF أو Word أو Excel', 'error');
+        e.target.value = '';
+        return false;
+    }
+    
+    return true;
+}
+
+/**
+ * Ferme le modal de modification
+ */
+function closeEditAppelOffreModal() {
+    const modal = document.getElementById('editAppelOffreModal');
+    modal.classList.remove('show');
+    modal.style.display = 'none';
+    
+    // Nettoyer le contenu
+    const modalBody = document.getElementById('editModalBody');
+    modalBody.innerHTML = '';
+    
+    // Réinitialiser les variables globales
+    window.editLotCounter = 0;
+    window.editFournisseurs = [];
+}
+
+/**
+ * Affiche un message d'alerte dans le modal d'édition
+ */
+function showEditAlert(message, type = 'info') {
+    const alertDiv = document.getElementById('editModalAlert');
+    
+    const colors = {
+        success: { bg: '#d4edda', color: '#155724', icon: '✓' },
+        error: { bg: '#f8d7da', color: '#721c24', icon: '✕' },
+        warning: { bg: '#fff3cd', color: '#856404', icon: '⚠️' },
+        info: { bg: '#d1ecf1', color: '#0c5460', icon: 'ℹ️' }
+    };
+    
+    const style = colors[type] || colors.info;
+    
+    alertDiv.innerHTML = `
+        <div style="background: ${style.bg}; color: ${style.color}; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+            ${style.icon} ${message}
+        </div>
+    `;
+    
+    // Faire défiler vers le haut du modal
+    document.querySelector('.modal-content').scrollTop = 0;
+}
+
+/**
+ * Affiche une erreur dans le modal
+ */
+function showEditError(message) {
+    const modalBody = document.getElementById('editModalBody');
+    modalBody.innerHTML = `
+        <div style="text-align: center; padding: 40px;">
+            <div style="font-size: 48px; margin-bottom: 20px;">❌</div>
+            <p style="color: #dc3545; font-size: 16px;">${message}</p>
+            <button onclick="closeEditAppelOffreModal()" class="btn btn-secondary" style="margin-top: 20px;">
+                إغلاق
+            </button>
+        </div>
+    `;
+}
+
+/**
+ * Échappe les caractères HTML pour éviter les injections XSS
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// ================================================================
+// FONCTION POUR OUVRIR LE MODAL DE SUPPRESSION D'APPEL D'OFFRE
+// ================================================================
+
+/**
+ * Ouvre le modal de confirmation de suppression
+ * @param {number} idAppel - ID de l'appel d'offre à supprimer
+ * @param {string} projetNom - Nom du projet (pour affichage)
+ */
+function openDeleteAppelOffreModal(idAppel, projetNom) {
+    const modal = document.getElementById('deleteAppelOffreModal');
+    modal.classList.add('show');
+    modal.style.display = 'flex';
+    
+    // Remplir le contenu du modal
+    const modalBody = document.getElementById('deleteModalBody');
+    modalBody.innerHTML = `
+        <div style="text-align: center; padding: 20px;">
+            <div style="font-size: 64px; color: #dc3545; margin-bottom: 20px;">⚠️</div>
+            
+            <h3 style="margin-bottom: 15px; color: #333;">هل أنت متأكد من حذف هذه الصفقة؟</h3>
+            
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+                <strong>المشروع:</strong> ${escapeHtml(projetNom)}
+            </div>
+            
+            <p style="color: #666; margin-bottom: 30px;">
+                سيتم حذف جميع البيانات المرتبطة بهذه الصفقة بشكل نهائي ولا يمكن التراجع عن هذا الإجراء.
+            </p>
+            
+            <div id="deleteModalAlert"></div>
+            
+            <form id="deleteAppelOffreForm" onsubmit="handleDeleteFormSubmit(event, ${idAppel})">
+                <input type="hidden" name="csrf_token" value="${document.querySelector('[name="csrf_token"]').value}">
+                <input type="hidden" name="action" value="delete_appel_offre">
+                <input type="hidden" name="idApp" value="${idAppel}">
+                
+                <div style="display: flex; gap: 15px; justify-content: center;">
+                    <button type="submit" class="btn btn-danger" style="min-width: 150px;">
+                        🗑️ نعم، احذف الصفقة
+                    </button>
+                    <button type="button" class="btn btn-secondary" onclick="closeDeleteAppelOffreModal()" 
+                            style="min-width: 150px;">
+                        ✕ إلغاء
+                    </button>
+                </div>
+            </form>
+        </div>
+    `;
+}
+
+/**
+ * Gère la soumission du formulaire de suppression
+ */
+function handleDeleteFormSubmit(e, idAppel) {
+    e.preventDefault();
+    
+    const form = e.target;
+    const formData = new FormData(form);
+    const alertDiv = document.getElementById('deleteModalAlert');
+    
+    // Désactiver les boutons
+    const deleteBtn = form.querySelector('button[type="submit"]');
+    const cancelBtn = form.querySelector('button[type="button"]');
+    const originalText = deleteBtn.innerHTML;
+    
+    deleteBtn.disabled = true;
+    cancelBtn.disabled = true;
+    deleteBtn.innerHTML = '⏳ جاري الحذف...';
+    
+    // Afficher un message de chargement
+    alertDiv.innerHTML = `
+        <div style="background: #fff3cd; color: #856404; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+            جاري حذف الصفقة...
+        </div>
+    `;
+    
+    // Envoyer la demande de suppression
+    fetch('appels_d_offres.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            // Afficher un message de succès
+            alertDiv.innerHTML = `
+                <div style="background: #d4edda; color: #155724; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                    ✓ ${data.message}
+                </div>
+            `;
+            
+            // Recharger la page après 1.5 secondes
+            setTimeout(() => {
+                window.location.reload();
+            }, 1500);
+        } else {
+            // Afficher le message d'erreur
+            alertDiv.innerHTML = `
+                <div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                    ✕ ${data.message}
+                </div>
+            `;
+            
+            // Réactiver les boutons
+            deleteBtn.disabled = false;
+            cancelBtn.disabled = false;
+            deleteBtn.innerHTML = originalText;
+        }
+    })
+    .catch(error => {
+        console.error('Error:', error);
+        alertDiv.innerHTML = `
+            <div style="background: #f8d7da; color: #721c24; padding: 12px; border-radius: 8px; margin-bottom: 20px;">
+                ✕ حدث خطأ في الاتصال بالخادم
+            </div>
+        `;
+        
+        // Réactiver les boutons
+        deleteBtn.disabled = false;
+        cancelBtn.disabled = false;
+        deleteBtn.innerHTML = originalText;
+    });
+}
+
+/**
+ * Ferme le modal de suppression
+ */
+function closeDeleteAppelOffreModal() {
+    const modal = document.getElementById('deleteAppelOffreModal');
+    modal.classList.remove('show');
+    modal.style.display = 'none';
+    
+    // Nettoyer le contenu
+    const modalBody = document.getElementById('deleteModalBody');
+    modalBody.innerHTML = '';
+}
+
+// ================================================================
+// GESTION DES ÉVÉNEMENTS GLOBAUX
+// ================================================================
+
+// Fermer les modals en cliquant en dehors
+window.addEventListener('click', function(event) {
+    const editModal = document.getElementById('editAppelOffreModal');
+    const deleteModal = document.getElementById('deleteAppelOffreModal');
+    
+    if (event.target === editModal) {
+        closeEditAppelOffreModal();
+    }
+    
+    if (event.target === deleteModal) {
+        closeDeleteAppelOffreModal();
+    }
+});
+
+// Fermer les modals avec la touche Échap
+window.addEventListener('keydown', function(event) {
+    if (event.key === 'Escape') {
+        closeEditAppelOffreModal();
+        closeDeleteAppelOffreModal();
+    }
+});
     </script>
 </body>
 </html>

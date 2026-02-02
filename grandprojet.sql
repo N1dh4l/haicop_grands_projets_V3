@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Hôte : 127.0.0.1
--- Généré le : ven. 05 déc. 2025 à 18:12
+-- Généré le : jeu. 11 déc. 2025 à 10:26
 -- Version du serveur : 10.4.21-MariaDB
 -- Version de PHP : 7.3.31
 
@@ -51,10 +51,7 @@ CREATE TABLE `commission` (
 
 INSERT INTO `commission` (`idCom`, `numCommission`, `dateCommission`) VALUES
 (1, 1, '2025-01-15'),
-(2, 3, '2025-02-27'),
-(3, 4, '2025-12-04'),
-(4, 5, '2025-06-24'),
-(5, 7, '2025-12-05');
+(6, 3, '2025-02-27');
 
 -- --------------------------------------------------------
 
@@ -177,9 +174,7 @@ INSERT INTO `document` (`idDoc`, `idPro`, `libDoc`, `cheminAcces`, `type`, `idEx
 (128, 70, 'محطة الضخ الكاف وادي الرمل', '../uploads/documents/doc_70_1764605618.doc', 1, 70),
 (129, 70, 'ت ر محطة الضخ الكاف وادي الرمل', '../uploads/documents/taqrir_70_1764605634.pdf', 11, 70),
 (130, 71, 'المستشفي الجهوي صنف &quot;ب&quot; بتالة', '../uploads/documents/doc_71_1764605712.pdf', 1, 71),
-(131, 12, 'محضر جلسة عدد 1', '../uploads/commissions/mahdar_1_1764950554.pdf', 1, 1),
-(132, 6, 'محضر جلسة عدد 3', '../uploads/commissions/mahdar_2_1764952098.pdf', 1, 2),
-(133, 11, 'محضر جلسة عدد 6', '../uploads/commissions/mahdar_3_1764952937.pdf', 1, 3);
+(137, 6, 'محضر جلسة عدد 3', '../uploads/commissions/mahdar_6_1765203497.pdf', 1, 6);
 
 -- --------------------------------------------------------
 
@@ -545,7 +540,18 @@ INSERT INTO `journal` (`idJournal`, `idUser`, `action`, `date`) VALUES
 (224, 1, 'تسجيل الدخول', '2025-12-05'),
 (225, 1, 'تسجيل الدخول', '2025-12-05'),
 (226, 1, 'تسجيل الدخول', '2025-12-05'),
-(227, 1, 'إضافة جلسة رقم 1 بتاريخ 2025-01-15 - المشاريع المعروضة: 4 | 1. حول مشروع تهيئة الملعب الأولمبي بالمنزه. (إدراج نهائي) | 2. مشروع بناء المستشفى الجهوي ببئر على بن خليفة بصفاقس (إدراج نهائي) | 3. مشروع دعم اسس و هياكل المبني الرئيسي بالمستشفي الجامعي الهادي شاكر بصفاقس. (إدراج نهائي) | 4. مشروع منصة أسواق الإنتاج الوسط. (إدراج نهائي) | تم رفع محضر الجلسة', '2025-12-05');
+(227, 1, 'إضافة جلسة رقم 1 بتاريخ 2025-01-15 - المشاريع المعروضة: 4 | 1. حول مشروع تهيئة الملعب الأولمبي بالمنزه. (إدراج نهائي) | 2. مشروع بناء المستشفى الجهوي ببئر على بن خليفة بصفاقس (إدراج نهائي) | 3. مشروع دعم اسس و هياكل المبني الرئيسي بالمستشفي الجامعي الهادي شاكر بصفاقس. (إدراج نهائي) | 4. مشروع منصة أسواق الإنتاج الوسط. (إدراج نهائي) | تم رفع محضر الجلسة', '2025-12-05'),
+(228, 1, 'تسجيل الدخول', '2025-12-08'),
+(229, 1, 'إضافة قرار اللجنة للجلسة رقم 2 - قرار اللجنة جلسة عدد 1', '2025-12-08'),
+(230, 1, 'إضافة قرار اللجنة للجلسة رقم 3 - قرار اللجنة جلسة عدد 4', '2025-12-08'),
+(231, 1, 'إضافة قرار اللجنة للجلسة رقم 4 - قرار اللجنة جلسة عدد 5', '2025-12-08'),
+(232, 1, 'تسجيل الدخول', '2025-12-08'),
+(233, 1, 'تسجيل الدخول', '2025-12-08'),
+(234, 1, 'حذف الجلسة رقم 3', '2025-12-08'),
+(235, 1, 'حذف الجلسة رقم 5', '2025-12-08'),
+(236, 1, 'حذف الجلسة رقم 4', '2025-12-08'),
+(237, 1, 'حذف الجلسة رقم 7', '2025-12-08'),
+(238, 1, 'تسجيل الدخول', '2025-12-10');
 
 -- --------------------------------------------------------
 
@@ -710,15 +716,9 @@ INSERT INTO `projetcommission` (`idPc`, `idPro`, `idCom`, `naturePc`) VALUES
 (2, 8, 1, 21),
 (3, 9, 1, 21),
 (4, 7, 1, 21),
-(5, 6, 2, 21),
-(6, 51, 2, 21),
-(7, 50, 2, 21),
-(8, 11, 3, 21),
-(9, 10, 3, 21),
-(10, 10, 4, 23),
-(11, 50, 4, 23),
-(12, 52, 4, 21),
-(13, 12, 5, 22);
+(14, 6, 6, 21),
+(15, 50, 6, 21),
+(16, 51, 6, 21);
 
 -- --------------------------------------------------------
 
@@ -896,13 +896,13 @@ ALTER TABLE `appeloffre`
 -- AUTO_INCREMENT pour la table `commission`
 --
 ALTER TABLE `commission`
-  MODIFY `idCom` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `idCom` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT pour la table `document`
 --
 ALTER TABLE `document`
-  MODIFY `idDoc` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=134;
+  MODIFY `idDoc` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=138;
 
 --
 -- AUTO_INCREMENT pour la table `etablissement`
@@ -926,7 +926,7 @@ ALTER TABLE `gouvernorat`
 -- AUTO_INCREMENT pour la table `journal`
 --
 ALTER TABLE `journal`
-  MODIFY `idJournal` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=228;
+  MODIFY `idJournal` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=239;
 
 --
 -- AUTO_INCREMENT pour la table `lot`
@@ -950,7 +950,7 @@ ALTER TABLE `projet`
 -- AUTO_INCREMENT pour la table `projetcommission`
 --
 ALTER TABLE `projetcommission`
-  MODIFY `idPc` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=14;
+  MODIFY `idPc` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=17;
 
 --
 -- AUTO_INCREMENT pour la table `secteur`

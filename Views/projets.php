@@ -207,8 +207,17 @@
             $libDoc = Security::sanitizeInput($_POST['libDoc']);
             $typeDoc = Security::sanitizeInput($_POST['typeDoc']);
             
+            // Convertir et valider le type de document
+            $typeDocNum = intval($typeDoc);
+            $typesAutorises = [12, 13, 14, 15, 16, 17];
+            
             if (empty($libDoc) || empty($typeDoc)) {
                 echo json_encode(['success' => false, 'message' => 'يرجى ملء جميع الحقول المطلوبة'], JSON_UNESCAPED_UNICODE);
+                exit();
+            }
+            
+            if (!in_array($typeDocNum, $typesAutorises)) {
+                echo json_encode(['success' => false, 'message' => 'نوع الملف غير صالح'], JSON_UNESCAPED_UNICODE);
                 exit();
             }
             
@@ -278,17 +287,15 @@
             
             // 9. Générer un nom de fichier unique
             $newFileName = 'file_' . $projetId . '_' . time() . '.' . $fileExtension;
+           
             $filePath = $uploadDir . $newFileName;
             $filePathDB = '../uploads/documents/' . $newFileName;
-            
             // 10. Déplacer le fichier uploadé
             if (!move_uploaded_file($_FILES['fichier_supplementaire']['tmp_name'], $filePath)) {
                 echo json_encode(['success' => false, 'message' => 'فشل في رفع الملف'], JSON_UNESCAPED_UNICODE);
                 exit();
             }
             
-            // 11. Déterminer le type de document (20 pour مراسلة, 21 pour اخرى)
-            $typeDocNum = ($typeDoc === 'مراسلة') ? 20 : 21;
             
             // 12. Insertion dans la base de données
             $db->beginTransaction();
@@ -661,10 +668,8 @@
 
         $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
                 CASE 
-                    WHEN p.etat = 0 THEN 'بصدد الدرس'
-                    WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                    WHEN p.etat = 2 THEN 'الموافقة'
-                    WHEN p.etat = 3 THEN 'عدم الموافقة'
+                    WHEN p.etat = 1 THEN 'بصدد الدرس'
+                    WHEN p.etat = 11 THEN 'الإحالة على اللجنة'
                     ELSE 'غير معروف'
                 END as etatLib,
                 (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
@@ -1331,6 +1336,7 @@
             flex-direction: column;
             gap: 4px;
             padding: 5px;
+            
         }
 
         .btn-action {
@@ -1557,6 +1563,12 @@
         .doc-type-11 { background: #f3e5f5; color: #7b1fa2; }
         .doc-type-20 { background: #e8f5e9; color: #388e3c; }
         .doc-type-21 { background: #fff3e0; color: #f57c00; }
+        .doc-type-12 { background: #e8eaf6; color: #3f51b5; }
+        .doc-type-13 { background: #f1f8e9; color: #689f38; }
+        .doc-type-14 { background: #fff3e0; color: #f57c00; }
+        .doc-type-15 { background: #fce4ec; color: #c2185b; }
+        .doc-type-16 { background: #e0f2f1; color: #00796b; }
+        .doc-type-17 { background: #efebe9; color: #5d4037; }
 
         .doc-title {
             font-weight: 600;
@@ -1771,6 +1783,12 @@
         .doc-type-1 { background: #e3f2fd; color: #1976d2; }
         .doc-type-11 { background: #f3e5f5; color: #7b1fa2; }
         .doc-type-20 { background: #e8f5e9; color: #388e3c; }
+        .doc-type-12 { background: #e8eaf6; color: #3f51b5; }
+        .doc-type-13 { background: #f1f8e9; color: #689f38; }
+        .doc-type-14 { background: #fff3e0; color: #f57c00; }
+        .doc-type-15 { background: #fce4ec; color: #c2185b; }
+        .doc-type-16 { background: #e0f2f1; color: #00796b; }
+        .doc-type-17 { background: #efebe9; color: #5d4037; }
         .doc-type-21 { background: #fff3e0; color: #f57c00; }
 
         .btn-view-doc {
@@ -1876,8 +1894,6 @@
                                 <option value="">جميع الحالات</option>
                                 <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
                                 <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
-                                <option value="2" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الموافقة</option>
-                                <option value="3" <?php echo $filterEtat === '3' ? 'selected' : ''; ?>>عدم الموافقة</option>
                             </select>
                         </div>
                         
@@ -1913,11 +1929,8 @@
                                 <th>الموضوع</th>
                                 <th>الوزارة</th>
                                 <th>المؤسسة</th>
-                                <th>الكلفة (م.د.ت)</th>
+                                <th>الكلفة المالية</th>
                                 <th>الحالة</th>
-                                <th>المستخدم</th>
-                                <th>المقترح</th>
-                                <th>التقرير الرقابي</th>
                                 <th>الإجراءات</th>
                             </tr>
                         </thead>
@@ -1935,7 +1948,7 @@
                                     </td>
                                     <td><?php echo htmlspecialchars($projet['libMinistere']); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libEtablissement']); ?></td>
-                                    <td><?php echo number_format($projet['cout'], 2, '.', ' '); ?></td>
+                                    <td></td>
                                     <td>
                                         <span class="badge <?php 
                                             switch($projet['etat']) {
@@ -1948,46 +1961,6 @@
                                         ?>">
                                             <?php echo $projet['etatLib']; ?>
                                         </span>
-                                    </td>
-                                    <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
-                                    <td>
-                                        <?php if ($projet['docMuqtarahId']): ?>
-                                            <a href="<?php echo $projet['cheminAccesMuqtarah'];?>" target="_blank" class="btn-action"
-                                                style="background: #dddeddff; color: white; padding: 6px 10px; border-radius: 6px; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;">
-                                               👁️
-                                            </a>
-                                        <?php else: ?>
-                                            <span style="color: #dddeddff;">-</span>
-                                        <?php endif; ?>
-                                    </td>
-                                    
-                                    <td style="text-align: center;">
-                                        <?php if (!empty($projet['cheminAccesTaqrir']) && $projet['docTaqrirId']): ?>
-                                            <!-- Document existe: Boutons Voir + Modifier -->
-                                            <div style="display: flex; gap: 5px; justify-content: center; align-items: center;">
-                                                <a href="<?php echo htmlspecialchars($projet['cheminAccesTaqrir']); ?>" 
-                                                target="_blank"
-                                                class="btn-action"
-                                                style="background: #dddeddff; color: white; padding: 6px 10px; border-radius: 6px; text-decoration: none; font-size: 12px; display: inline-flex; align-items: center; gap: 4px;"
-                                                title="عرض التقرير الرقابي">
-                                                    <span>👁️</span>
-                                                </a>
-                                            </div>
-                                        <?php else: ?>
-                                            <!-- Document n'existe pas: Bouton Ajouter -->
-                                            <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
-                                                <button onclick="openTaqrirModal(<?php echo $projet['idPro']; ?>)" 
-                                                        class="btn-action"
-                                                        style="background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%); color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; font-size: 13px; font-weight: 600; box-shadow: 0 2px 8px rgba(255,152,0,0.3); transition: all 0.3s; display: inline-flex; align-items: center; gap: 6px;"
-                                                        onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(255,152,0,0.4)'"
-                                                        onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(255,152,0,0.3)'"
-                                                        title="إضافة التقرير الرقابي">
-                                                    <span>إضافة</span>
-                                                </button>
-                                            <?php else: ?>
-                                                <span style="color: #999; font-size: 14px;">لا يوجد</span>
-                                            <?php endif; ?>
-                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <div class="actions-container">
@@ -2456,9 +2429,17 @@
                     <div class="form-group">
                         <label>نوع الملف <span class="required">*</span></label>
                         <select name="typeDoc" class="form-control" required>
-                            <option value="">-- اختر النوع --</option>
-                            <option value="مراسلة">مراسلة</option>
-                            <option value="اخرى">اخرى</option>
+                            <option value="">-- اختر النوع --</option> 
+                            
+                            <option value="12">مقترح إدراج</option>
+                            <option value="13">تقرير رقابي إدراج</option>
+                            
+                            <option value="14">مقترح إسناد</option>
+                            <option value="15">تقرير رقابي إسناد</option>
+                            
+                            <option value="16">مراسلة</option>
+                            <option value="17">اخرى</option>
+                            
                         </select>
                     </div>
                     
@@ -3044,7 +3025,7 @@
             .then(response => response.json())
             .then(data => {
                 if (data.success) {
-                    displayProjetDetails(data.projet, data.documents);
+                    displayProjetDetails(data.projet, data.documents, data.commissions, data.appels);
                 } else {
                     document.getElementById('detailsContent').innerHTML = 
                         '<div class="alert alert-error">✖ ' + data.message + '</div>';
@@ -3058,7 +3039,7 @@
     }
 
     // Fonction pour afficher les détails
-    function displayProjetDetails(projet, documents) {
+    function displayProjetDetails(projet, documents, commissions, appels) {
         var statusColors = {
             0: 'badge-pending',
             1: 'badge-processing',
@@ -3135,7 +3116,7 @@
                             <tr>
                                 <td>${index + 1}</td>
                                 <td>
-                                    <span class="doc-type-badge doc-type-${doc.type}">${doc.typeLib}</span>
+                                    <span class="doc-type-badge doc-type-${doc.type}">${doc.nom_type}</span>
                                 </td>
                                 <td style="text-align: right; padding-right: 20px;">${doc.libDoc}</td>
                                 <td>
@@ -3154,6 +3135,54 @@
                     <p>لا توجد وثائق مرفقة</p>
                 </div>
             `}
+            
+            <!-- Section Commissions -->
+            ${commissions && commissions.length > 0 ? `
+                <div class="section-title" style="margin-top: 30px;">
+                    <span>🏛️</span>
+                    <span>اللجان (${commissions.length})</span>
+                </div>
+                <table class="documents-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">رقم اللجنة</th>
+                            <th style="width: 25%;">تاريخ اللجنة</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${commissions.map(comm => `
+                            <tr>
+                                <td>${comm.numCommission}</td>
+                                <td>${comm.dateCommission}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            ` : ''}
+            
+            <!-- Section Appels d'offre -->
+            ${appels && appels.length > 0 ? `
+                <div class="section-title" style="margin-top: 30px;">
+                    <span>📢</span>
+                    <span>طلبات العروض (${appels.length})</span>
+                </div>
+                <table class="documents-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;">رقم</th>
+                            <th style="width: 25%;">تاريخ الإنشاء</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${appels.map((appel, index) => `
+                            <tr>
+                                <td>${index + 1}</td>
+                                <td>${appel.dateCreation}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            ` : ''}
         `;
         
         document.getElementById('detailsContent').innerHTML = html;
@@ -3199,6 +3228,13 @@
             closeDetailsModal();
         }
     }
+
+    /**
+ * Retourne le nom en arabe d'un type de document
+ * @param int $typeNum Le numéro du type de document
+ * @return string Le nom du type de document
+ */
+
         
     </script>
 </body>

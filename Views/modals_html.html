@@ -1,0 +1,379 @@
+<!-- ================================================================ -->
+<!-- MODAL DE MODIFICATION D'APPEL D'OFFRE -->
+<!-- ================================================================ -->
+<div id="editAppelOffreModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>✏️ تعديل الصفقة</h2>
+            <span class="close" onclick="closeEditAppelOffreModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="editModalBody">
+            <!-- Le contenu sera chargé dynamiquement par JavaScript -->
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- MODAL DE SUPPRESSION D'APPEL D'OFFRE -->
+<!-- ================================================================ -->
+<div id="deleteAppelOffreModal" class="modal">
+    <div class="modal-content" style="max-width: 500px;">
+        <div class="modal-header">
+            <h2>🗑️ حذف الصفقة</h2>
+            <span class="close" onclick="closeDeleteAppelOffreModal()">&times;</span>
+        </div>
+        <div class="modal-body" id="deleteModalBody">
+            <!-- Le contenu sera chargé dynamiquement par JavaScript -->
+        </div>
+    </div>
+</div>
+
+<!-- ================================================================ -->
+<!-- STYLES CSS POUR LES MODALS -->
+<!-- ================================================================ -->
+<style>
+    /* Modal Container */
+    .modal {
+        display: none;
+        position: fixed;
+        z-index: 9999;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        overflow: auto;
+        background-color: rgba(0, 0, 0, 0.6);
+        backdrop-filter: blur(3px);
+        align-items: center;
+        justify-content: center;
+        animation: fadeIn 0.3s ease-in-out;
+    }
+
+    .modal.show {
+        display: flex !important;
+    }
+
+    /* Modal Content */
+    .modal-content {
+        background-color: #ffffff;
+        margin: auto;
+        padding: 0;
+        border-radius: 15px;
+        width: 90%;
+        max-width: 900px;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 50px rgba(0, 0, 0, 0.3);
+        animation: slideDown 0.3s ease-in-out;
+    }
+
+    /* Modal Header */
+    .modal-header {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 20px 30px;
+        border-radius: 15px 15px 0 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .modal-header h2 {
+        margin: 0;
+        font-size: 24px;
+        font-weight: 600;
+    }
+
+    /* Close Button */
+    .modal-header .close {
+        color: white;
+        font-size: 32px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: transform 0.2s, opacity 0.2s;
+        line-height: 1;
+    }
+
+    .modal-header .close:hover,
+    .modal-header .close:focus {
+        opacity: 0.8;
+        transform: scale(1.1);
+    }
+
+    /* Modal Body */
+    .modal-body {
+        padding: 30px;
+    }
+
+    /* Form Groups */
+    .form-group-full {
+        margin-bottom: 20px;
+    }
+
+    .form-group-full label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+        font-size: 14px;
+    }
+
+    .form-control {
+        width: 100%;
+        padding: 12px 15px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: inherit;
+        transition: border-color 0.3s, box-shadow 0.3s;
+        box-sizing: border-box;
+    }
+
+    .form-control:focus {
+        outline: none;
+        border-color: #667eea;
+        box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+    }
+
+    .form-control:disabled {
+        background-color: #f5f5f5;
+        cursor: not-allowed;
+    }
+
+    /* Required Field Indicator */
+    .required {
+        color: #dc3545;
+        font-weight: bold;
+    }
+
+    /* Lots Section */
+    .lots-section {
+        background: #f8f9fa;
+        padding: 20px;
+        border-radius: 10px;
+        margin: 25px 0;
+    }
+
+    .lots-section h3 {
+        margin: 0 0 15px 0;
+        font-size: 18px;
+        color: #333;
+    }
+
+    /* Lots Table */
+    .lots-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 15px;
+        background: white;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .lots-table thead {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+    }
+
+    .lots-table th {
+        padding: 12px;
+        text-align: center;
+        font-weight: 600;
+        font-size: 14px;
+    }
+
+    .lots-table td {
+        padding: 10px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .lots-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    .lots-table tbody tr:hover {
+        background-color: #f8f9fa;
+    }
+
+    /* Buttons */
+    .btn {
+        padding: 12px 24px;
+        border: none;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.3s;
+        text-decoration: none;
+        display: inline-block;
+        text-align: center;
+    }
+
+    .btn-success {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+    }
+
+    .btn-success:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+    }
+
+    .btn-success:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-secondary {
+        background: #6c757d;
+        color: white;
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+        background: #5a6268;
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(108, 117, 125, 0.3);
+    }
+
+    .btn-danger {
+        background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+        color: white;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(220, 53, 69, 0.3);
+    }
+
+    .btn-danger:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
+    .btn-add-lot {
+        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        color: white;
+        border: none;
+        padding: 10px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: 600;
+        font-size: 14px;
+        transition: all 0.3s;
+    }
+
+    .btn-add-lot:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(40, 167, 69, 0.3);
+    }
+
+    .btn-remove-lot {
+        background: #dc3545;
+        color: white;
+        border: none;
+        padding: 8px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.3s;
+        font-size: 16px;
+    }
+
+    .btn-remove-lot:hover:not(:disabled) {
+        background: #c82333;
+        transform: scale(1.1);
+    }
+
+    .btn-remove-lot:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    /* Loader Animation */
+    .loader {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #667eea;
+        border-radius: 50%;
+        width: 50px;
+        height: 50px;
+        animation: spin 1s linear infinite;
+    }
+
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+    }
+
+    /* Animations */
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+        }
+        to {
+            opacity: 1;
+        }
+    }
+
+    @keyframes slideDown {
+        from {
+            transform: translateY(-50px);
+            opacity: 0;
+        }
+        to {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .modal-content {
+            width: 95%;
+            max-height: 95vh;
+        }
+
+        .modal-header {
+            padding: 15px 20px;
+        }
+
+        .modal-header h2 {
+            font-size: 20px;
+        }
+
+        .modal-body {
+            padding: 20px;
+        }
+
+        .lots-table {
+            font-size: 13px;
+        }
+
+        .lots-table th,
+        .lots-table td {
+            padding: 8px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            font-size: 13px;
+        }
+    }
+
+    /* Scrollbar Styling */
+    .modal-content::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .modal-content::-webkit-scrollbar-track {
+        background: #f1f1f1;
+        border-radius: 10px;
+    }
+
+    .modal-content::-webkit-scrollbar-thumb {
+        background: #667eea;
+        border-radius: 10px;
+    }
+
+    .modal-content::-webkit-scrollbar-thumb:hover {
+        background: #5568d3;
+    }
+</style>
