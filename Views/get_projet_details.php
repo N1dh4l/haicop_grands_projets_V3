@@ -26,11 +26,10 @@ try {
                 e.libEtablissement,
                 u.nomUser,
                 CASE 
-                    WHEN p.etat = 0 THEN 'قيد الانتظار'
-                    WHEN p.etat = 1 THEN 'قيد المعالجة'
-                    WHEN p.etat = 2 THEN 'مقبول'
-                    WHEN p.etat = 3 THEN 'مرفوض'
-                    ELSE 'غير محدد'
+                    WHEN p.etat = 1 THEN 'بصدد الدرس'
+                    WHEN p.etat = 11 OR p.etat = 21 THEN 'الإحالة على اللجنة'
+                    WHEN p.etat = 30 THEN 'الموافقة'
+                    ELSE 'غير معروف'
                 END as etatLib
             FROM projet p
             LEFT JOIN ministere m ON p.idMinistere = m.idMinistere

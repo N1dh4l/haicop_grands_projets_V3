@@ -209,7 +209,7 @@
             
             // Convertir et valider le type de document
             $typeDocNum = intval($typeDoc);
-            $typesAutorises = [12, 13, 14, 15, 16, 17];
+            $typesAutorises = [2, 3, 4];
             
             if (empty($libDoc) || empty($typeDoc)) {
                 echo json_encode(['success' => false, 'message' => 'يرجى ملء جميع الحقول المطلوبة'], JSON_UNESCAPED_UNICODE);
@@ -335,7 +335,23 @@
                 throw $e;
             }
             
-        } catch (Exception $e) {
+                $nouvelEtat = null;
+                
+                if ($typeDocNum == 2) {
+                    // Type 13 (ت.ر.إدراج) : passer de l'état 0 à 1
+                    $nouvelEtat = 2;
+                }
+                
+                // Si un nouvel état est défini, mettre à jour le projet
+                if ($nouvelEtat !== null) {
+                    $sqlUpdateEtat = "UPDATE projet SET etat = :nouvelEtat WHERE idPro = :projetId";
+                    $stmtUpdateEtat = $db->prepare($sqlUpdateEtat);
+                    $stmtUpdateEtat->bindParam(':nouvelEtat', $nouvelEtat, PDO::PARAM_INT);
+                    $stmtUpdateEtat->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+                    $stmtUpdateEtat->execute();
+                }
+        
+            } catch (Exception $e) {
             if (isset($db) && $db->inTransaction()) {
                 $db->rollBack();
             }
@@ -381,7 +397,7 @@
             $db->beginTransaction();
             
             $sql = "INSERT INTO projet (idMinistere, idEtab, id_Gov, sujet, dateArrive, procedurePro, cout, proposition, idUser, etat, dateCreation) 
-            VALUES (:idMinistere, :idEtab, :idGov, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 0, NOW())";
+            VALUES (:idMinistere, :idEtab, :idGov, :sujet, :dateArrive, :procedurePro, :cout, :proposition, :idRapporteur, 1, NOW())";
 
             $stmt = $db->prepare($sql);
             $stmt->bindParam(':idMinistere', $idMinistere);
@@ -521,6 +537,7 @@
             $stmtUpdate->bindParam(':proposition', $proposition);
             $stmtUpdate->bindParam(':idRapporteur', $idRapporteur);
             $stmtUpdate->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+            $stmtUpdate->execute();
 
             
         
@@ -669,7 +686,9 @@
         $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
                 CASE 
                     WHEN p.etat = 1 THEN 'بصدد الدرس'
-                    WHEN p.etat = 11 THEN 'الإحالة على اللجنة'
+                    WHEN p.etat = 2  THEN 'الإحالة على اللجنة'
+                    WHEN p.etat = 3 THEN 'موافقة وقتية'
+                    WHEN p.etat = 4 THEN 'الموافقة'
                     ELSE 'غير معروف'
                 END as etatLib,
                 (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
@@ -824,10 +843,10 @@
         // ==========================================
         $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, u.nomUser,
                 CASE 
-                    WHEN p.etat = 0 THEN 'بصدد الدرس'
-                    WHEN p.etat = 1 THEN 'الإحالة على اللجنة'
-                    WHEN p.etat = 2 THEN 'الموافقة'
-                    WHEN p.etat = 3 THEN 'عدم الموافقة'
+                    WHEN p.etat = 1 THEN 'بصدد الدرس'
+                    WHEN p.etat = 2  THEN 'الإحالة على اللجنة'
+                    WHEN p.etat = 3 THEN 'موافقة وقتية'
+                    WHEN p.etat = 4 THEN 'الموافقة'
                     ELSE 'غير معروف'
                 END as etatLib,
                 (SELECT idDoc FROM document WHERE idPro = p.idPro AND type = 1 LIMIT 1) as docMuqtarahId,
@@ -908,6 +927,118 @@
     <title><?php echo $page_title; ?></title>
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
+        /* Styles pour les boutons d'exportation */
+        .export-buttons-container {
+            animation: slideInFromRight 0.5s ease-out;
+        }
+
+        @keyframes slideInFromRight {
+            from {
+                opacity: 0;
+                transform: translateX(50px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .btn-export {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 13px;
+            border: none;
+            border-radius: 7px;
+            font-weight: 600;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.25s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-family: Arial, sans-serif;
+            letter-spacing: 0.3px;
+        }
+
+        .btn-export:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .btn-export:active {
+            transform: translateY(0);
+        }
+
+        .btn-export svg {
+            transition: transform 0.3s ease;
+        }
+
+        .btn-export:hover svg {
+            transform: scale(1.1);
+        }
+
+        .btn-export-excel {
+            background: linear-gradient(135deg, #217346 0%, #2d9a5a 100%);
+            color: white;
+        }
+
+        .btn-export-excel:hover {
+            background: linear-gradient(135deg, #1a5c37 0%, #257d4b 100%);
+        }
+
+        .btn-export-word {
+            background: linear-gradient(135deg, #2b579a 0%, #3d6fc4 100%);
+            color: white;
+        }
+
+        .btn-export-word:hover {
+            background: linear-gradient(135deg, #1f3f6d 0%, #2d5294 100%);
+        }
+
+        .btn-export-pdf {
+            background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%);
+            color: white;
+        }
+
+        .btn-export-pdf:hover {
+            background: linear-gradient(135deg, #a82424 0%, #d32f2f 100%);
+        }
+
+        .export-loading {
+            position: relative;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        .export-loading::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .export-buttons-container > div {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .btn-export {
+                width: 100%;
+                justify-content: center;
+            }
+        }
         .stats-summary {
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -960,12 +1091,17 @@
             font-size: 14px;
         }
 
+        /* SECTION 1: Positionner les boutons d'exportation à droite */
         .filter-actions {
             display: flex;
             gap: 15px;
             justify-content: flex-end;
         }
-        
+        .btn-sm {
+            padding: 7px 16px !important;
+            font-size: 12px !important;
+        }
+
         .btn {
             padding: 12px 30px;
             border: none;
@@ -978,7 +1114,7 @@
             display: inline-block;
         }
         .btn-primary {
-            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
         }
         .btn-secondary {
@@ -1003,6 +1139,7 @@
         table {
             width: 100%;
             border-collapse: collapse;
+            table-layout: fixed;
         }
         thead {
             background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
@@ -1018,23 +1155,50 @@
         tbody tr:hover {
             background: #f8f9fa;
         }
+        
         .badge {
-            padding: 6px 12px;
+            padding: 6px 14px;
             border-radius: 20px;
             font-size: 12px;
-            font-weight: 600;
+            font-weight: 700;
+            display: inline-block;
+            white-space: nowrap;
         }
-            .badge-pending { background: #fff3cd; color: #856404; }
-            .badge-processing { background: #d1ecf1; color: #0c5460; }
-            .badge-approved { background: #d4edda; color: #155724; }
-            .badge-rejected { background: #f8d7da; color: #721c24; }
-            .btn-action {
-                padding: 6px 12px;
-                border-radius: 6px;
-                font-size: 12px;
-                text-decoration: none;
-                margin: 0 2px;
-            }
+
+        /* بصدد الدرس - Bleu gris */
+        .badge-pending { 
+            background: #e8f4fd; 
+            color: #1a6fa8; 
+            border: 1px solid #b8d9f0;
+        }
+
+        /* الإحالة على اللجنة - Orange */
+        .badge-processing { 
+            background: #fff4e5; 
+            color: #b85c00; 
+            border: 1px solid #ffd699;
+        }
+
+        /* موافقة وقتية - Violet */
+        .badge-temp { 
+            background: #f3e8ff; 
+            color: #6b21a8; 
+            border: 1px solid #d8b4fe;
+        }
+
+        /* الموافقة - Vert */
+        .badge-approved { 
+            background: #dcfce7; 
+            color: #166534; 
+            border: 1px solid #86efac;
+        }
+
+        /* عدم الموافقة - Rouge */
+        .badge-rejected { 
+            background: #fee2e2; 
+            color: #991b1b; 
+            border: 1px solid #fca5a5;
+        }    
             .btn-view { background: #17a2b8; color: white; }
             .btn-edit { background: #ffc107; color: #333; }
             .btn-delete { background: #dc3545; color: white; }
@@ -1261,66 +1425,45 @@
                     justify-content: center;
                 }
             }
-            /* Ajuster les largeurs des colonnes du tableau */
-            table th:nth-child(1), /* الموضوع */
-            table td:nth-child(1) {
-                width: 15%;
-                max-width: 200px;
-            }
+            
 
             /* Ajuster les largeurs des colonnes du tableau */
             table th:nth-child(1), /* الموضوع */
             table td:nth-child(1) {
-                width: 18%;
-                max-width: 250px;
+                width: 22%;
             }
 
             table th:nth-child(2), /* الوزارة */
             table td:nth-child(2) {
-                width: 11%;
-                min-width: 110px;
+                width: 14%;
             }
 
             table th:nth-child(3), /* المؤسسة */
             table td:nth-child(3) {
-                width: 9%;
+                width: 12%;
             }
 
-            table th:nth-child(4), /* تاريخ الوصول */
+        
+            table th:nth-child(4), /* الكلفة */
             table td:nth-child(4) {
-                width: 7%;
+                width: 10%;
             }
 
-            table th:nth-child(5), /* الكلفة */
+            table th:nth-child(5), /* الحالة */
             table td:nth-child(5) {
-                width: 7%;
+                width: 14%;
             }
 
-            table th:nth-child(6), /* الحالة */
+            table th:nth-child(6), /* المستخدم */
             table td:nth-child(6) {
-                width: 11%;
-                min-width: 110px;
-            }
-
-            table th:nth-child(7), /* المستخدم */
-            table td:nth-child(7) {
                 width: 9%;
-                min-width: 90px;
             }
 
-            table th:nth-child(8), /* المقترح */
-            table td:nth-child(8) {
-                width: 3%;
-            }
-
-            table th:nth-child(9), /* التقرير الرقابي */
-            table td:nth-child(9) {
-                width: 3%;
-            }
-
-            table th:nth-child(10), /* الإجراءات */
-            table td:nth-child(10) {
-                width: 18%;
+            /* Colonne الإجراءات */
+            table th:last-child,
+            table td:last-child {
+                width: 19%;
+                padding: 6px 4px !important;
             }
 
             /* Contrôle du débordement du texte pour الموضوع */
@@ -1332,92 +1475,71 @@
             }
             
             .actions-container {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
-            padding: 5px;
-            
-        }
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    padding: 4px 2px;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+}
+        
 
         .btn-action {
-            padding: 6px 10px;
-            border-radius: 8px;
-            font-size: 13px;
-            font-weight: 600;
-            text-decoration: none;
-            cursor: pointer;
-            transition: all 0.4s ease;
-            border: 2px solid;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 8px;
-            background: transparent;
-            position: relative;
-            overflow: hidden;
-        }
+    padding: 5px 10px !important;
+    border-radius: 6px;
+    font-size: 12px !important;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    min-width: 56px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    white-space: nowrap;
+}
 
-        .btn-action::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: -100%;
-            width: 100%;
-            height: 100%;
-            transition: left 0.4s ease;
-            z-index: -1;
-        }
+.btn-action:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+}
 
-        .btn-action:hover::before {
-            left: 0;
-        }
-
-        /* Bouton Modifier */
+        /* Bouton Modifier - Jaune/Orange */
         .btn-edit {
-            border-color: #ffc107;
-            color: #ffc107;
-        }
-
-        .btn-edit::before {
-            background: linear-gradient(135deg, #FF6B35 0%,#FF6B35);
+            background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%);
+            color: #333;
         }
 
         .btn-edit:hover {
-            color: white;
-            border-color: #ff9800;
+            background: linear-gradient(135deg, #FFB300 0%, #FFA000 100%);
+            color: #000;
         }
 
-        /* Bouton Ajouter */
+        /* Bouton Ajouter - Bleu/Cyan */
         .btn-add-file {
-            border-color: #17a2b8;
-            color: #17a2b8;
-        }
-
-        .btn-add-file::before {
-            background: linear-gradient(135deg, #FF6B35, #FF6B35);
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            color: white;
         }
 
         .btn-add-file:hover {
-            color: white;
-            border-color: #138496;
+            background: linear-gradient(135deg, #138496 0%, #0f6674 100%);
         }
 
-        /* Bouton Supprimer */
+        /* Bouton Supprimer - Rouge */
         .btn-delete {
-            border-color: #dc3545;
-            color: #dc3545;
-        }
-
-        .btn-delete::before {
-            background: linear-gradient(135deg, #dc3545, #c82333);
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
         }
 
         .btn-delete:hover {
-            color: white;
-            border-color: #c82333;
+            background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
         }
         .admin-header {
-            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
             color: white;
             padding: 40px;
             border-radius: 15px;
@@ -1864,7 +1986,7 @@
                             <input type="text" name="search" placeholder="ابحث عن مقترح..." value="<?php echo htmlspecialchars($searchQuery); ?>">
                         </div>
                         
-                        <!-- الوزارة -->
+                        <!-- الوزارة 
                         <div class="filter-group">
                             <label>الوزارة</label>
                             <select name="ministere">
@@ -1876,27 +1998,27 @@
                                     </option>
                                 <?php endforeach; ?>
                             </select>
-                        </div>
+                        </div>-->
                         
-                        <!-- المؤسسات -->
+                        <!-- المؤسسات 
                         <div class="filter-group">
                             <label>المؤسسات</label>
                             <select name="ministere">
                                 <option value="">جميع المؤسسات</option>
                                 <option value=""> </option>
                             </select>
-                        </div>
+                        </div>-->
                         
-                        <!-- الحالة -->
+                        <!-- الحالة 
                         <div class="filter-group">
                             <label>الحالة</label>
                             <select name="etat">
                                 <option value="">جميع الحالات</option>
-                                <option value="0" <?php echo $filterEtat === '0' ? 'selected' : ''; ?>>بصدد الدرس</option>
-                                <option value="1" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
+                                <option value="0" <?php echo $filterEtat === '1' ? 'selected' : ''; ?>>بصدد الدرس</option>
+                                <option value="1" <?php echo $filterEtat === '2' ? 'selected' : ''; ?>>الإحالة على اللجنة</option>
                             </select>
                         </div>
-                        
+                        -->
                         <!-- ✨ NOUVEAU: السنة -->
                         <div class="filter-group">
                             <label>السنة</label>
@@ -1913,15 +2035,50 @@
                     </div>
                     
                     <div class="filter-actions">
-                        <button type="submit" class="btn btn-primary">🔍 بحث</button>
-                        <a href="projets.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
-                        <?php if (Permissions::canCreateProjet()): ?>
-                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة مقترح</button>
-                        <?php endif; ?>
+                        <button type="submit" class="btn btn-primary btn-sm">🔍 بحث</button>
+                        <a href="projets.php" class="btn btn-secondary btn-sm">🔄 إعادة تعيين</a>
                     </div>
                 </form>
             </div>
             <div class="projects-table">
+                <!-- Barre : bouton ajout (droite) + export (gauche) -->
+                <div style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; direction:rtl;">
+
+                    <!-- ➕ Bouton ajout — droite -->
+                    <?php if (Permissions::canCreateProjet() && isset($_SESSION['user_type']) && $_SESSION['user_type'] == 1): ?>
+                    <button type="button" id="btnOpenModal" style="
+                        display: inline-flex;
+                        align-items: center;
+                        gap: 9px;
+                        padding: 10px 17px;
+                        background: linear-gradient(135deg, #56ab2f 0%, #2d6a0f 100%);
+                        color: #fff;
+                        border: none;
+                        border-radius: 12px;
+                        font-size: 15px;
+                        font-weight: 700;
+                        font-family: inherit;
+                        cursor: pointer;
+                        
+                        transition: transform 0.15s ease, box-shadow 0.15s ease;
+                        letter-spacing: 0.4px;
+                    "
+                    onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 24px rgba(45,106,15,0.50), inset 0 1px 0 rgba(255,255,255,0.18)'"
+                    onmouseout="this.style.transform='';this.style.boxShadow='0 5px 18px rgba(45,106,15,0.38), inset 0 1px 0 rgba(255,255,255,0.18)'"
+                    onmousedown="this.style.transform='translateY(0)'"
+                    > ➕ إضافة مقترح</button>
+                    <?php else: ?>
+                    <div></div>
+                    <?php endif; ?>
+
+                    <div style="display:inline-flex; align-items:center; gap:7px; background:white; padding:9px 13px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.09); direction:ltr;">
+                        <span style="color:#888; font-size:11px; margin-left:4px; white-space:nowrap;">📥 تحميل</span>
+                        <button onclick="exportData('excel')" class="btn-export btn-export-excel" title="تصدير إلى Excel"><span>Excel</span></button>
+                        <button onclick="exportData('word')"  class="btn-export btn-export-word"  title="تصدير إلى Word"><span>Word</span></button>
+                        <button onclick="exportData('pdf')"   class="btn-export btn-export-pdf"   title="تصدير إلى PDF"><span>PDF</span></button>
+                    </div>
+
+                </div>
                 <?php if (count($projets) > 0): ?>
                     <table>
                         <thead>
@@ -1930,8 +2087,11 @@
                                 <th>الوزارة</th>
                                 <th>المؤسسة</th>
                                 <th>الكلفة المالية</th>
+                                <th>المقرر</th>
                                 <th>الحالة</th>
+                                <?php if (isset($_SESSION['user_type']) && $_SESSION['user_type'] == 1): ?>
                                 <th>الإجراءات</th>
+                                <?php endif; ?>
                             </tr>
                         </thead>
                         <tbody>
@@ -1948,35 +2108,37 @@
                                     </td>
                                     <td><?php echo htmlspecialchars($projet['libMinistere']); ?></td>
                                     <td><?php echo htmlspecialchars($projet['libEtablissement']); ?></td>
-                                    <td></td>
+                                    <td style="text-align: left; direction: ltr;"><?php echo number_format($projet['cout'], 3, '.', ' '); ?> ألف دينار </td>
+                                    <td><?php echo htmlspecialchars($projet['nomUser']); ?></td>
                                     <td>
                                         <span class="badge <?php 
                                             switch($projet['etat']) {
-                                                case 0: echo 'badge-pending'; break;
-                                                case 1: echo 'badge-processing'; break;
-                                                case 2: echo 'badge-approved'; break;
-                                                case 3: echo 'badge-rejected'; break;
+                                                case 1:  echo 'badge-pending';    break; // بصدد الدرس
+                                                case 2: echo 'badge-processing'; break; // الإحالة على اللجنة
+                                                case 3: echo 'badge-temp';       break; // موافقة وقتية
+                                                case 4: echo 'badge-approved';   break; // الموافقة
+                                                case 5:  echo 'badge-rejected';   break; // عدم الموافقة
                                                 default: echo 'badge-pending';
                                             }
                                         ?>">
                                             <?php echo $projet['etatLib']; ?>
                                         </span>
                                     </td>
+                                    <?php if (isset($_SESSION['user_type']) && $_SESSION['user_type'] == 1): ?>
                                     <td>
                                         <div class="actions-container">
                                             <?php if (Permissions::canEditProjet($projet['idUser'])): ?>
-                                                <!-- Bouton Modifier -->
-                                                <button onclick="openEditModal(<?php echo $projet['idPro']; ?>)" 
-                                                        class="btn-action btn-edit"
-                                                        title="تعديل المقترح">
-                                                        تعديل
-                                                </button>
-                                                
                                                 <!-- Bouton Ajouter fichier -->
                                                 <button onclick="openAddFileModal(<?php echo $projet['idPro']; ?>)" 
                                                         class="btn-action btn-add-file"
                                                         title="إضافة ملف جديد">
                                                     ملف
+                                                </button>
+                                                <!-- Bouton Modifier -->
+                                                <button onclick="openEditModal(<?php echo $projet['idPro']; ?>)" 
+                                                        class="btn-action btn-edit"
+                                                        title="تعديل المقترح">
+                                                        تعديل
                                                 </button>
                                             <?php endif; ?>
                                             
@@ -1989,7 +2151,8 @@
                                                 </button>
                                             <?php endif; ?>
                                         </div>
-                                    </td>    
+                                    </td>
+                                    <?php endif; ?>
                                 </tr>
                             <?php endforeach; ?>
                         </tbody>
@@ -2079,7 +2242,7 @@
     <div id="addProjetModal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2>➕ إضافة مقترح </h2>
+                <h2>إضافة مقترح</h2>
                 <span class="close" id="btnCloseModal">&times;</span>
             </div>
             <div class="modal-body">
@@ -2136,13 +2299,13 @@
                         
                         <!-- 6. الكلفة -->
                         <div class="form-group">
-                            <label>الكلفة التقديرية (د.ت) <span class="required">*</span></label>
+                            <label>الكلفة التقديرية(مليون دينار) <span class="required">*</span></label>
                             <input type="number" name="cout" class="form-control" required 
                                    step="0.01" min="0" placeholder="0.00">
                         </div>
                         <div class="form-group">
                             <label>الولاية <span class="required">*</span></label>
-                                <select name="id_Gov" id="editGouvernorat" class="form-control" required>
+                                <select name="id_Gov" id="addGouvernorat" class="form-control" required>
                                     <option value="">-- اختر الولاية --</option>
                                     <?php foreach ($gouvernorats as $gov): ?>
                                         <option value="<?php echo $gov['idGov']; ?>">
@@ -2300,14 +2463,14 @@
                             
                             <!-- 6. الكلفة -->
                             <div class="form-group">
-                                <label>الكلفة التقديرية (د.ت) <span class="required">*</span></label>
+                                <label>الكلفة التقديرية (مليون دينار) <span class="required">*</span></label>
                                 <input type="number" name="cout" id="editCout" class="form-control" required 
                                     step="0.01" min="0" placeholder="0.00">
                             </div>
                             <!-- 7. الولاية -->
                             <div class="form-group">
                                 <label>الولاية <span class="required">*</span></label>
-                                <select name="id_Gov" id="modalGouvernorat" class="form-control" required>
+                                <select name="id_Gov" id="editGouvernorat" class="form-control" required>
                                     <option value="">-- اختر الولاية --</option>
                                     <?php foreach ($gouvernorats as $gov): ?>
                                         <option value="<?php echo $gov['idGov']; ?>">
@@ -2338,26 +2501,70 @@
                             </div>
                             <!-- 10. ملف المقترح -->
                             <div class="form-group form-group-full">
-                                <label>المقترح</label>
+                                <label>📄 ملف المقترح</label>
+                                <!-- Fichier existant -->
+                                <div id="currentMuqtarahInfo" style="display:none; margin-bottom: 10px; padding: 10px 14px; background: #f0f7ff; border: 1px solid #b3d4f5; border-radius: 8px; direction: rtl;">
+                                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                        <span style="font-size:20px;">📎</span>
+                                        <div style="flex:1; min-width:0;">
+                                            <div style="font-weight:600; color:#1a56db; font-size:13px;" id="currentMuqtarahName">—</div>
+                                            <div style="font-size:11px; color:#6b7280; margin-top:2px;">الملف الحالي — سيتم استبداله عند اختيار ملف جديد</div>
+                                        </div>
+                                        <a id="currentMuqtarahLink" href="#" target="_blank"
+                                           style="font-size:12px; color:#1a56db; text-decoration:none; border:1px solid #b3d4f5; padding:4px 10px; border-radius:5px; white-space:nowrap;">
+                                            ⬇ تحميل
+                                        </a>
+                                    </div>
+                                </div>
                                 <input type="text" name="libDocMuqtarah" id="editLibDocMuqtarah" 
                                     class="form-control" placeholder="عنوان الملف" style="margin-bottom: 10px;">
-                                <input type="file" name="fichier_muqtarah" id="editFichierMuqtarah" 
-                                    class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx">
-                                <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                    اترك فارغاً للاحتفاظ بالملف الحالي
-                                </small>
+                                <!-- Zone upload avec indicateur d'écrasement -->
+                                <div id="muqtarahUploadZone" style="position:relative;">
+                                    <input type="file" name="fichier_muqtarah" id="editFichierMuqtarah" 
+                                        class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx"
+                                        onchange="onFileSelected(this, 'muqtarahWarning', 'currentMuqtarahInfo')">
+                                    <div id="muqtarahWarning" style="display:none; margin-top:8px; padding:8px 12px; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; font-size:12px; color:#856404; direction:rtl;">
+                                        ⚠️ <strong>تنبيه :</strong> سيتم <strong>إتلاف الملف الحالي وإستبداله</strong> بالملف الجديد بشكل نهائي.
+                                        <button type="button" onclick="cancelFileSelection('editFichierMuqtarah','muqtarahWarning')" 
+                                                style="margin-right:10px; background:none; border:none; color:#856404; cursor:pointer; font-size:12px; text-decoration:underline;">
+                                            ✕ إلغاء
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                             
                             <!-- 11. ملف التقرير الرقابي -->
                             <div class="form-group form-group-full">
-                                <label>تحديث التقرير الرقابي</label>
+                                <label>📋 التقرير الرقابي</label>
+                                <!-- Fichier existant -->
+                                <div id="currentTaqrirInfo" style="display:none; margin-bottom: 10px; padding: 10px 14px; background: #f0f7ff; border: 1px solid #b3d4f5; border-radius: 8px; direction: rtl;">
+                                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                                        <span style="font-size:20px;">📎</span>
+                                        <div style="flex:1; min-width:0;">
+                                            <div style="font-weight:600; color:#1a56db; font-size:13px;" id="currentTaqrirName">—</div>
+                                            <div style="font-size:11px; color:#6b7280; margin-top:2px;">الملف الحالي — سيتم استبداله عند اختيار ملف جديد</div>
+                                        </div>
+                                        <a id="currentTaqrirLink" href="#" target="_blank"
+                                           style="font-size:12px; color:#1a56db; text-decoration:none; border:1px solid #b3d4f5; padding:4px 10px; border-radius:5px; white-space:nowrap;">
+                                            ⬇ تحميل
+                                        </a>
+                                    </div>
+                                </div>
                                 <input type="text" name="libDocTaqrir" id="editLibDocTaqrir" 
                                     class="form-control" placeholder="عنوان التقرير" style="margin-bottom: 10px;">
-                                <input type="file" name="fichier_taqrir_update" id="editFichierTaqrir" 
-                                    class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx">
-                                <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                    اترك فارغاً للاحتفاظ بالملف الحالي
-                                </small>
+                                <!-- Zone upload avec indicateur d'écrasement -->
+                                <div id="taqrirUploadZone" style="position:relative;">
+                                    <input type="file" name="fichier_taqrir_update" id="editFichierTaqrir" 
+                                        class="form-control" accept=".pdf,.doc,.docx,.xls,.xlsx"
+                                        onchange="onFileSelected(this, 'taqrirWarning', 'currentTaqrirInfo')">
+                                    <div id="taqrirWarning" style="display:none; margin-top:8px; padding:8px 12px; background:#fff3cd; border:1px solid #ffc107; border-radius:6px; font-size:12px; color:#856404; direction:rtl;">
+                                        ⚠️ <strong>تنبيه :</strong> سيتم <strong>إتلاف الملف الحالي وإستبداله</strong> بالملف الجديد بشكل نهائي.
+                                        <button type="button" onclick="cancelFileSelection('editFichierTaqrir','taqrirWarning')" 
+                                                style="margin-right:10px; background:none; border:none; color:#856404; cursor:pointer; font-size:12px; text-decoration:underline;">
+                                            ✕ إلغاء
+                                        </button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         
@@ -2430,15 +2637,9 @@
                         <label>نوع الملف <span class="required">*</span></label>
                         <select name="typeDoc" class="form-control" required>
                             <option value="">-- اختر النوع --</option> 
-                            
-                            <option value="12">مقترح إدراج</option>
-                            <option value="13">تقرير رقابي إدراج</option>
-                            
-                            <option value="14">مقترح إسناد</option>
-                            <option value="15">تقرير رقابي إسناد</option>
-                            
-                            <option value="16">مراسلة</option>
-                            <option value="17">اخرى</option>
+                            <option value="2">التقرير الرقابي</option>                            
+                            <option value="3">مراسلة</option>
+                            <option value="4">وثيقة أخرى</option>
                             
                         </select>
                     </div>
@@ -2894,19 +3095,38 @@
                         document.getElementById('editCout').value = p.cout;
                         document.getElementById('editProposition').value = p.proposition;
                         document.getElementById('editRapporteur').value = p.idUser;
-                        document.getElementById('editGouvernorat').value = p.id_Gov; 
+                        document.getElementById('editGouvernorat').value = p.id_Gov;
                         
                         // Charger les établissements
                         if (p.idMinistere) {
                             loadEtablissementsForEdit(p.idMinistere, p.idEtab);
                         }
                         
-                        // Pré-remplir les titres de documents s'ils existent
+                        // Pré-remplir les titres de documents et afficher les fichiers existants
+                        var muqtarahInfo = document.getElementById('currentMuqtarahInfo');
+                        var taqrirInfo   = document.getElementById('currentTaqrirInfo');
+                        
+                        // Réinitialiser
+                        muqtarahInfo.style.display = 'none';
+                        taqrirInfo.style.display   = 'none';
+                        document.getElementById('muqtarahWarning').style.display = 'none';
+                        document.getElementById('taqrirWarning').style.display   = 'none';
+                        
                         if (data.docMuqtarah) {
                             document.getElementById('editLibDocMuqtarah').value = data.docMuqtarah.libDoc;
+                            // Afficher le bloc fichier existant
+                            var fileName = data.docMuqtarah.cheminAcces.split('/').pop();
+                            document.getElementById('currentMuqtarahName').textContent = data.docMuqtarah.libDoc || fileName;
+                            document.getElementById('currentMuqtarahLink').href = data.docMuqtarah.cheminAcces;
+                            muqtarahInfo.style.display = 'block';
                         }
                         if (data.docTaqrir) {
                             document.getElementById('editLibDocTaqrir').value = data.docTaqrir.libDoc;
+                            // Afficher le bloc fichier existant
+                            var fileNameT = data.docTaqrir.cheminAcces.split('/').pop();
+                            document.getElementById('currentTaqrirName').textContent = data.docTaqrir.libDoc || fileNameT;
+                            document.getElementById('currentTaqrirLink').href = data.docTaqrir.cheminAcces;
+                            taqrirInfo.style.display = 'block';
                         }
                     } else {
                         alert('خطأ في تحميل بيانات المقترح');
@@ -2954,6 +3174,11 @@
             document.body.style.overflow = 'auto';
             document.getElementById('editProjetForm').reset();
             document.getElementById('editModalAlert').innerHTML = '';
+            // Réinitialiser les blocs fichiers existants
+            document.getElementById('currentMuqtarahInfo').style.display = 'none';
+            document.getElementById('currentTaqrirInfo').style.display   = 'none';
+            document.getElementById('muqtarahWarning').style.display     = 'none';
+            document.getElementById('taqrirWarning').style.display       = 'none';
         }
 
         if (btnCloseEdit) {
@@ -3076,7 +3301,7 @@
                         <td class="label-cell">صيغة المشروع</td>
                         <td class="value-cell">${projet.procedurePro}</td>
                         <td class="label-cell">الكلفة التقديرية</td>
-                        <td class="value-cell">${parseFloat(projet.cout).toLocaleString('fr-FR', {minimumFractionDigits: 2})} م.د.ت</td>
+                        <td class="value-cell">${parseFloat(projet.cout).toLocaleString('fr-FR', {minimumFractionDigits: 2})} مليون دينار</td>
                     </tr>
                     <tr>
                         <td class="label-cell">الحالة</td>
@@ -3106,7 +3331,6 @@
                     <thead>
                         <tr>
                             <th style="width: 10%;">#</th>
-                            <th style="width: 20%;">نوع الوثيقة</th>
                             <th style="width: 50%;">عنوان الوثيقة</th>
                             <th style="width: 20%;">الإجراءات</th>
                         </tr>
@@ -3115,9 +3339,7 @@
                         ${documents.map((doc, index) => `
                             <tr>
                                 <td>${index + 1}</td>
-                                <td>
-                                    <span class="doc-type-badge doc-type-${doc.type}">${doc.nom_type}</span>
-                                </td>
+                                
                                 <td style="text-align: right; padding-right: 20px;">${doc.libDoc}</td>
                                 <td>
                                     <a href="${doc.cheminAcces}" target="_blank" class="btn-view-doc">
@@ -3140,7 +3362,7 @@
             ${commissions && commissions.length > 0 ? `
                 <div class="section-title" style="margin-top: 30px;">
                     <span>🏛️</span>
-                    <span>اللجان (${commissions.length})</span>
+                    <span>الجلسات (${commissions.length})</span>
                 </div>
                 <table class="documents-table">
                     <thead>
@@ -3230,12 +3452,171 @@
     }
 
     /**
- * Retourne le nom en arabe d'un type de document
- * @param int $typeNum Le numéro du type de document
- * @return string Le nom du type de document
- */
+         * Fonction pour exporter les données dans différents formats
+         */
+        function exportData(format) {
+            const button = event.currentTarget;
+            const originalContent = button.innerHTML;
+            
+            button.disabled = true;
+            button.classList.add('export-loading');
+            
+            const loadingMessage = document.createElement('div');
+            loadingMessage.style.cssText = `
+                position: fixed;
+                top: 20px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 15px 30px;
+                border-radius: 10px;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                z-index: 10000;
+                font-weight: 600;
+                direction: rtl;
+                animation: slideDown 0.3s ease-out;
+            `;
+            
+            const formatNames = {
+                'excel': 'Excel',
+                'word': 'Word', 
+                'pdf': 'PDF'
+            };
+            
+            loadingMessage.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <div style="width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: white; border-radius: 50%; animation: spin 0.6s linear infinite;"></div>
+                    <span>جاري تصدير البيانات إلى ${formatNames[format]}...</span>
+                </div>
+            `;
+            document.body.appendChild(loadingMessage);
+            
+            const iframe = document.createElement('iframe');
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
+            
+            const exportUrl = `export_projets.php?format=${encodeURIComponent(format)}`;
+            iframe.src = exportUrl;
+            
+            setTimeout(() => {
+                loadingMessage.remove();
+                button.disabled = false;
+                button.classList.remove('export-loading');
+                
+                const successMessage = document.createElement('div');
+                successMessage.style.cssText = `
+                    position: fixed;
+                    top: 20px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: linear-gradient(135deg, #4caf50 0%, #66bb6a 100%);
+                    color: white;
+                    padding: 15px 30px;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+                    z-index: 10000;
+                    font-weight: 600;
+                    direction: rtl;
+                    animation: slideDown 0.3s ease-out;
+                `;
+                successMessage.innerHTML = `
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-size: 20px;">✓</span>
+                        <span>تم تصدير البيانات بنجاح!</span>
+                    </div>
+                `;
+                document.body.appendChild(successMessage);
+                
+                setTimeout(() => {
+                    successMessage.style.animation = 'slideUp 0.3s ease-out';
+                    setTimeout(() => successMessage.remove(), 300);
+                }, 3000);
+                
+                setTimeout(() => iframe.remove(), 5000);
+            }, 2000);
+        }
 
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideDown {
+                from {
+                    opacity: 0;
+                    transform: translateX(-50%) translateY(-20px);
+                }
+                to {
+                    opacity: 1;
+                    transform: translateX(-50%) translateY(0);
+                }
+            }
+            
+            @keyframes slideUp {
+                from {
+                    opacity: 1;
+                    transform: translateX(-50%) translateY(0);
+                }
+                to {
+                    opacity: 0;
+                    transform: translateX(-50%) translateY(-20px);
+                }
+            }
+            
+            @keyframes spin {
+                to { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+
+    /**
+    * Fonction d'exportation simple
+    */
+    function exportData(format) {
+        const button = event.currentTarget;
+        button.disabled = true;
+        button.style.opacity = '0.6';
         
+        // Créer iframe pour téléchargement
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        document.body.appendChild(iframe);
+        iframe.src = `export_projets.php?format=${format}`;
+        
+        // Message simple
+        alert(`جاري تصدير البيانات إلى ${format.toUpperCase()}...`);
+        
+        // Réactiver le bouton après 2 secondes
+        setTimeout(() => {
+            button.disabled = false;
+            button.style.opacity = '1';
+            setTimeout(() => iframe.remove(), 3000);
+        }, 2000);
+    }    
+    /**
+     * Affiche un avertissement d'écrasement quand l'utilisateur choisit un nouveau fichier
+     */
+    function onFileSelected(input, warningId, currentInfoId) {
+        var warning = document.getElementById(warningId);
+        var currentInfo = document.getElementById(currentInfoId);
+        if (input.files && input.files.length > 0) {
+            // Montrer l'avertissement seulement s'il y a déjà un fichier existant
+            if (currentInfo && currentInfo.style.display !== 'none') {
+                warning.style.display = 'block';
+            }
+        } else {
+            warning.style.display = 'none';
+        }
+    }
+
+    /**
+     * Annule la sélection d'un fichier et masque l'avertissement
+     */
+    function cancelFileSelection(inputId, warningId) {
+        var input = document.getElementById(inputId);
+        var warning = document.getElementById(warningId);
+        input.value = '';
+        warning.style.display = 'none';
+    }
+
     </script>
 </body>
 </html>

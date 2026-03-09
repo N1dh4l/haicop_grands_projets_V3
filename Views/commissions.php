@@ -24,6 +24,15 @@
         ob_clean();
         header('Content-Type: application/json; charset=utf-8');
         
+        // Vérifier si PHP a rejeté l'upload à cause des limites php.ini
+        if (isset($_SERVER['CONTENT_LENGTH']) && $_SERVER['CONTENT_LENGTH'] > 0 && empty($_POST) && empty($_FILES)) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'حجم الملف يتجاوز الحد المسموح به في إعدادات الخادم. يرجى التواصل مع المسؤول لرفع الحد إلى 20 ميغابايت.'
+            ]);
+            exit;
+        }
+        
         try {
             // Validation CSRF
             if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
@@ -90,6 +99,25 @@
                 $stmtProjetCommission->bindParam(':idCom', $idCom);
                 $stmtProjetCommission->bindParam(':naturePc', $naturePc);
                 $stmtProjetCommission->execute();
+                
+                // Mettre à jour l'état du projet selon la nature
+                // 20 (إدراج وقتي) ou 21 (إدراج نهائي) → état 2
+                // 22 (إسناد وقتي) → état 3
+                // 23 (إسناد نهائي) → état 4
+                if ($naturePc == 20 || $naturePc == 21) {
+                    $newEtat = 2;
+                } elseif ($naturePc == 22) {
+                    $newEtat = 3;
+                } elseif ($naturePc == 23) {
+                    $newEtat = 4;
+                } else {
+                    $newEtat = $naturePc;
+                }
+                $queryUpdateProjet = "UPDATE projet SET etat = :etat WHERE idPro = :idPro";
+                $stmtUpdateProjet = $db->prepare($queryUpdateProjet);
+                $stmtUpdateProjet->bindParam(':etat', $newEtat);
+                $stmtUpdateProjet->bindParam(':idPro', $idPro);
+                $stmtUpdateProjet->execute();
             }
             
             // Traiter le fichier محضر الجلسة (optionnel)
@@ -115,8 +143,8 @@
                     throw new Exception('نوع الملف غير مقبول للمحضر');
                 }
                 
-                if ($fileSize > 10242880) { // 5MB
-                    throw new Exception('حجم ملف المحضر يجب أن يكون أقل من 5 ميغابايت');
+                if ($fileSize > 20971520) { // 20MB
+                    throw new Exception('حجم ملف المحضر يجب أن يكون أقل من 20 ميغابايت');
                 }
                 
                 // Générer un nom unique
@@ -173,7 +201,7 @@
     }
 
     // Récupérer la liste des projets avec état 1 OR 21 OR 22 OR 23 pour le select
-    $queryProjets = "SELECT idPro, sujet FROM projet WHERE etat IN (1, 21, 22, 23) ORDER BY dateCreation DESC";    $stmtProjets = $db->prepare($queryProjets);
+    $queryProjets = "SELECT idPro, sujet FROM projet WHERE etat IN (2, 3) ORDER BY dateCreation DESC";    $stmtProjets = $db->prepare($queryProjets);
     $stmtProjets->execute();
     $projets = $stmtProjets->fetchAll(PDO::FETCH_ASSOC);
 
@@ -316,155 +344,118 @@ $totalPages = ceil($totalItems / $itemsPerPage);
     }
     // Traitement de l'upload de قرار اللجنة
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'upload_qarar') {
-        ob_clean();
-        header('Content-Type: application/json; charset=utf-8');
-        
-        try {
-            // Validation CSRF
-            if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-                throw new Exception('Token de sécurité invalide');
-            }
-            
-            // Vérifier les permissions
-            if (!Permissions::canEditProjet($_SESSION['user_id'])) {
-                throw new Exception('ليس لديك صلاحية لإضافة قرار اللجنة');
-            }
-            
-            // Récupérer les données
-            $idCom = isset($_POST['idCom']) ? intval($_POST['idCom']) : 0;
-            $libDocQarar = isset($_POST['libDocQarar']) ? trim($_POST['libDocQarar']) : '';
-            
-            // Validation
-            if ($idCom <= 0) {
-                throw new Exception('معرف الجلسة غير صالح');
-            }
-            
-            if (empty($libDocQarar)) {
-                throw new Exception('عنوان قرار اللجنة مطلوب');
-            }
-            
-            // Vérifier que la commission existe
-            $checkQuery = "SELECT idCom FROM commission WHERE idCom = :idCom";
-            $checkStmt = $db->prepare($checkQuery);
-            $checkStmt->bindParam(':idCom', $idCom);
-            $checkStmt->execute();
-            
-            if ($checkStmt->rowCount() == 0) {
-                throw new Exception('الجلسة غير موجودة');
-            }
-            
-            // Vérifier qu'il n'y a pas déjà un قرار اللجنة
-            $checkDocQuery = "SELECT COUNT(*) as count FROM document WHERE type = 26 AND idExterne = :idCom";
-            $checkDocStmt = $db->prepare($checkDocQuery);
-            $checkDocStmt->bindParam(':idCom', $idCom);
-            $checkDocStmt->execute();
-            $docExists = $checkDocStmt->fetch(PDO::FETCH_ASSOC);
-            
-            if ($docExists['count'] > 0) {
-                throw new Exception('يوجد بالفعل قرار للجنة لهذه الجلسة');
-            }
-            
-            // Traiter le fichier
-            if (!isset($_FILES['fichierQarar']) || $_FILES['fichierQarar']['error'] !== UPLOAD_ERR_OK) {
-                throw new Exception('يرجى اختيار ملف قرار اللجنة');
-            }
-            
-            $fileTmpPath = $_FILES['fichierQarar']['tmp_name'];
-            $fileName = $_FILES['fichierQarar']['name'];
-            $fileSize = $_FILES['fichierQarar']['size'];
-            $fileNameCmps = explode(".", $fileName);
-            $fileExtension = strtolower(end($fileNameCmps));
-            
-            // Extensions autorisées
-            $allowedExtensions = array('pdf', 'doc', 'docx', 'xls', 'xlsx');
-            
-            if (!in_array($fileExtension, $allowedExtensions)) {
-                throw new Exception('نوع الملف غير مقبول لقرار اللجنة');
-            }
-            
-            if ($fileSize > 10242880) { // 10MB
-                throw new Exception('حجم ملف قرار اللجنة يجب أن يكون أقل من 10 ميغابايت');
-            }
-            
-            // Commencer la transaction
-            $db->beginTransaction();
-            
-            // Générer un nom unique
-            $newFileName = 'qarar_' . $idCom . '_' . time() . '.' . $fileExtension;
-            $uploadFileDir = '../uploads/commissions/';
-            
-            if (!file_exists($uploadFileDir)) {
-                mkdir($uploadFileDir, 0755, true);
-            }
-            
-            $dest_path = $uploadFileDir . $newFileName;
-            
-            if (!move_uploaded_file($fileTmpPath, $dest_path)) {
-                throw new Exception('فشل في رفع الملف');
-            }
-            
-            // Récupérer le premier projet de la commission
-            $getProjetQuery = "SELECT idPro FROM projetcommission WHERE idCom = :idCom LIMIT 1";
-            $getProjetStmt = $db->prepare($getProjetQuery);
-            $getProjetStmt->bindParam(':idCom', $idCom);
-            $getProjetStmt->execute();
-            $projetData = $getProjetStmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$projetData) {
-                throw new Exception('لم يتم العثور على مشروع مرتبط بهذه الجلسة');
-            }
-            
-            $idPro = $projetData['idPro'];
-            
-            // Insérer dans la table document
-            $queryDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
-                        VALUES (:idPro, :libDoc, :cheminAcces, :type, :idExterne)";
-            $stmtDoc = $db->prepare($queryDoc);
-            $stmtDoc->bindParam(':idPro', $idPro);
-            $stmtDoc->bindParam(':libDoc', $libDocQarar);
-            $stmtDoc->bindParam(':cheminAcces', $dest_path);
-            $type = 26; // Type pour قرار اللجنة
-            $stmtDoc->bindParam(':type', $type);
-            $stmtDoc->bindParam(':idExterne', $idCom);
-            $stmtDoc->execute();
-            
-            // Mise à jour du journal
-            $action = "إضافة قرار اللجنة للجلسة رقم " . $idCom . " - " . $libDocQarar;
-            $idUser = $_SESSION['user_id'] ?? 0;
-            
-            $queryJournal = "INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, NOW())";
-            $stmtJournal = $db->prepare($queryJournal);
-            $stmtJournal->bindParam(':idUser', $idUser);
-            $stmtJournal->bindParam(':action', $action);
-            $stmtJournal->execute();
-            
-            // Valider la transaction
-            $db->commit();
-            
-            echo json_encode([
-                'success' => true,
-                'message' => 'تم رفع قرار اللجنة بنجاح'
-            ]);
-            
-        } catch (Exception $e) {
-            if ($db->inTransaction()) {
-                $db->rollBack();
-            }
-            // Supprimer le fichier si upload réussi mais erreur après
-            if (isset($dest_path) && file_exists($dest_path)) {
-                unlink($dest_path);
-            }
-            echo json_encode([
-                'success' => false,
-                'message' => $e->getMessage()
-            ]);
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+    
+    try {
+        // Validation CSRF
+        if (!isset($_POST['csrf_token']) || $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
+            throw new Exception('Token de sécurité invalide');
         }
-        exit;
+        
+        // Vérifier les permissions
+        if (!Permissions::canEditProjet($_SESSION['user_id'])) {
+            throw new Exception('ليس لديك صلاحية لإضافة قرار اللجنة');
+        }
+        
+        $idCom = isset($_POST['idCom']) ? intval($_POST['idCom']) : 0;
+        $libDocQarar = isset($_POST['libDocQarar']) ? trim($_POST['libDocQarar']) : '';
+        
+        if ($idCom <= 0) throw new Exception('معرف الجلسة غير صالح');
+        if (empty($libDocQarar)) throw new Exception('عنوان قرار اللجنة مطلوب');
+        
+        // Vérifier que la commission existe
+        $checkQuery = "SELECT idCom FROM commission WHERE idCom = :idCom";
+        $checkStmt = $db->prepare($checkQuery);
+        $checkStmt->bindParam(':idCom', $idCom);
+        $checkStmt->execute();
+        if ($checkStmt->rowCount() == 0) throw new Exception('الجلسة غير موجودة');
+        
+        if (!isset($_FILES['fichierQarar']) || $_FILES['fichierQarar']['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception('يرجى اختيار ملف قرار اللجنة');
+        }
+        
+        $fileTmpPath   = $_FILES['fichierQarar']['tmp_name'];
+        $fileName      = $_FILES['fichierQarar']['name'];
+        $fileSize      = $_FILES['fichierQarar']['size'];
+        $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+        
+        $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+        if (!in_array($fileExtension, $allowedExtensions)) throw new Exception('نوع الملف غير مقبول');
+        if ($fileSize > 20971520) throw new Exception('حجم الملف يجب أن يكون أقل من 20 ميغابايت');
+        
+        $db->beginTransaction();
+        
+        // Récupérer le premier projet
+        $getProjetQuery = "SELECT idPro FROM projetcommission WHERE idCom = :idCom LIMIT 1";
+        $getProjetStmt  = $db->prepare($getProjetQuery);
+        $getProjetStmt->bindParam(':idCom', $idCom);
+        $getProjetStmt->execute();
+        $projetData = $getProjetStmt->fetch(PDO::FETCH_ASSOC);
+        if (!$projetData) throw new Exception('لم يتم العثور على مشروع مرتبط بهذه الجلسة');
+        $idPro = $projetData['idPro'];
+        
+        // Uploader le fichier
+        $newFileName   = 'qarar_' . $idCom . '_' . time() . '.' . $fileExtension;
+        $uploadFileDir = '../uploads/commissions/';
+        if (!file_exists($uploadFileDir)) mkdir($uploadFileDir, 0755, true);
+        $dest_path = $uploadFileDir . $newFileName;
+        
+        if (!move_uploaded_file($fileTmpPath, $dest_path)) throw new Exception('فشل في رفع الملف');
+        
+        // Supprimer l'ancien قرار s'il existe déjà
+        $getOld = "SELECT cheminAcces FROM document WHERE type = 26 AND idExterne = :idCom";
+        $stmtOld = $db->prepare($getOld);
+        $stmtOld->bindParam(':idCom', $idCom);
+        $stmtOld->execute();
+        $old = $stmtOld->fetch(PDO::FETCH_ASSOC);
+        if ($old && file_exists($old['cheminAcces'])) unlink($old['cheminAcces']);
+        
+        $db->prepare("DELETE FROM document WHERE type = 26 AND idExterne = :idCom")
+           ->execute([':idCom' => $idCom]);
+        
+        // Insérer le nouveau document
+        $queryDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                    VALUES (:idPro, :libDoc, :cheminAcces, :type, :idExterne)";
+        $stmtDoc = $db->prepare($queryDoc);
+        $stmtDoc->bindParam(':idPro', $idPro);
+        $stmtDoc->bindParam(':libDoc', $libDocQarar);
+        $stmtDoc->bindParam(':cheminAcces', $dest_path);
+        $type = 26;
+        $stmtDoc->bindParam(':type', $type);
+        $stmtDoc->bindParam(':idExterne', $idCom);
+        $stmtDoc->execute();
+        
+        // Journal
+        $action  = "إضافة قرار اللجنة للجلسة رقم " . $idCom . " - " . $libDocQarar;
+        $idUser  = $_SESSION['user_id'] ?? 0;
+        $db->prepare("INSERT INTO journal (idUser, action, date) VALUES (:idUser, :action, NOW())")
+           ->execute([':idUser' => $idUser, ':action' => $action]);
+        
+        $db->commit();
+        
+        echo json_encode(['success' => true, 'message' => 'تم رفع قرار اللجنة بنجاح']);
+        
+    } catch (Exception $e) {
+        if ($db->inTransaction()) $db->rollBack();
+        if (isset($dest_path) && file_exists($dest_path)) unlink($dest_path);
+        echo json_encode(['success' => false, 'message' => $e->getMessage()]);
     }
+    exit;
+}
     // Traitement de la modification de commission
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'edit_commission') {
         ob_clean();
         header('Content-Type: application/json; charset=utf-8');
+        
+        // Vérifier si PHP a rejeté l'upload à cause des limites php.ini
+        if (isset($_SERVER['CONTENT_LENGTH']) && $_SERVER['CONTENT_LENGTH'] > 0 && empty($_POST) && empty($_FILES)) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'حجم الملف يتجاوز الحد المسموح به في إعدادات الخادم. يرجى التواصل مع المسؤول لرفع الحد إلى 20 ميغابايت.'
+            ]);
+            exit;
+        }
         
         try {
             // Validation CSRF
@@ -552,8 +543,19 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                 $stmtProjetCom->bindParam(':naturePc', $naturePc);
                 $stmtProjetCom->execute();
                 
-                // Mettre à jour l'état du projet
-                $newEtat = $naturePc; // 20, 21, 22 ou 23
+                // Mettre à jour l'état du projet selon la nature choisie
+                // 20 (إدراج وقتي) ou 21 (إدراج نهائي) → état 2
+                // 22 (إسناد وقتي) → état 3
+                // 23 (إسناد نهائي) → état 4
+                if ($naturePc == 20 || $naturePc == 21) {
+                    $newEtat = 2;
+                } elseif ($naturePc == 22) {
+                    $newEtat = 3;
+                } elseif ($naturePc == 23) {
+                    $newEtat = 4;
+                } else {
+                    $newEtat = $naturePc;
+                }
                 $queryUpdateProjet = "UPDATE projet SET etat = :etat WHERE idPro = :idPro";
                 $stmtUpdateProjet = $db->prepare($queryUpdateProjet);
                 $stmtUpdateProjet->bindParam(':etat', $newEtat);
@@ -582,8 +584,8 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                     throw new Exception('نوع الملف غير مقبول للمحضر');
                 }
                 
-                if ($fileSize > 5242880) {
-                    throw new Exception('حجم ملف المحضر يجب أن يكون أقل من 5 ميغابايت');
+                if ($fileSize > 20971520) {
+                    throw new Exception('حجم ملف المحضر يجب أن يكون أقل من 20 ميغابايت');
                 }
                 
                 // Supprimer l'ancien fichier محضر
@@ -636,6 +638,77 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                 $stmtUpdateLib->bindParam(':idCom', $idCom);
                 $stmtUpdateLib->execute();
             }
+            
+            // ========= AJOUTER ICI - Traiter قرار اللجنة =========
+            if (isset($_FILES['fichierQarar']) && $_FILES['fichierQarar']['error'] === UPLOAD_ERR_OK) {
+                $libDocQarar = isset($_POST['libDocQarar']) ? trim($_POST['libDocQarar']) : '';
+                
+                if (empty($libDocQarar)) {
+                    throw new Exception('عنوان قرار اللجنة مطلوب');
+                }
+                
+                $fileTmpPath = $_FILES['fichierQarar']['tmp_name'];
+                $fileName    = $_FILES['fichierQarar']['name'];
+                $fileSize    = $_FILES['fichierQarar']['size'];
+                $fileExtension = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
+                
+                $allowedExtensions = ['pdf', 'doc', 'docx', 'xls', 'xlsx'];
+                if (!in_array($fileExtension, $allowedExtensions)) {
+                    throw new Exception('نوع الملف غير مقبول لقرار اللجنة');
+                }
+                if ($fileSize > 20971520) {
+                    throw new Exception('حجم ملف قرار اللجنة يجب أن يكون أقل من 20 ميغابايت');
+                }
+                
+                // Supprimer l'ancien قرار s'il existe
+                $getOldQarar = "SELECT cheminAcces FROM document WHERE type = 26 AND idExterne = :idCom";
+                $stmtOldQarar = $db->prepare($getOldQarar);
+                $stmtOldQarar->bindParam(':idCom', $idCom);
+                $stmtOldQarar->execute();
+                $oldQarar = $stmtOldQarar->fetch(PDO::FETCH_ASSOC);
+                if ($oldQarar && file_exists($oldQarar['cheminAcces'])) {
+                    unlink($oldQarar['cheminAcces']);
+                }
+                
+                $deleteOldQarar = "DELETE FROM document WHERE type = 26 AND idExterne = :idCom";
+                $stmtDeleteQarar = $db->prepare($deleteOldQarar);
+                $stmtDeleteQarar->bindParam(':idCom', $idCom);
+                $stmtDeleteQarar->execute();
+                
+                // Uploader le nouveau fichier
+                $newFileName   = 'qarar_' . $idCom . '_' . time() . '.' . $fileExtension;
+                $uploadFileDir = '../uploads/commissions/';
+                if (!file_exists($uploadFileDir)) {
+                    mkdir($uploadFileDir, 0755, true);
+                }
+                $dest_path = $uploadFileDir . $newFileName;
+                
+                if (move_uploaded_file($fileTmpPath, $dest_path)) {
+                    $firstProjetId = intval($projets[0]);
+                    $queryDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                                VALUES (:idPro, :libDoc, :cheminAcces, :type, :idExterne)";
+                    $stmtDoc = $db->prepare($queryDoc);
+                    $stmtDoc->bindParam(':idPro', $firstProjetId);
+                    $stmtDoc->bindParam(':libDoc', $libDocQarar);
+                    $stmtDoc->bindParam(':cheminAcces', $dest_path);
+                    $type = 26;
+                    $stmtDoc->bindParam(':type', $type);
+                    $stmtDoc->bindParam(':idExterne', $idCom);
+                    $stmtDoc->execute();
+                }
+            } else if (!empty($_POST['libDocQarar'])) {
+                // Mettre à jour seulement le libellé
+                $libDocQarar = trim($_POST['libDocQarar']);
+                $updateLibDoc = "UPDATE document SET libDoc = :libDoc WHERE type = 26 AND idExterne = :idCom";
+                $stmtUpdateLib = $db->prepare($updateLibDoc);
+                $stmtUpdateLib->bindParam(':libDoc', $libDocQarar);
+                $stmtUpdateLib->bindParam(':idCom', $idCom);
+                $stmtUpdateLib->execute();
+            }
+            // ========= FIN AJOUT قرار =========
+            
+            // Journal
+            $action = "تعديل الجلسة رقم " . $numCommission . " بتاريخ " . $dateCommission;
             
             // Journal
             $action = "تعديل الجلسة رقم " . $numCommission . " بتاريخ " . $dateCommission;
@@ -713,6 +786,24 @@ $totalPages = ceil($totalItems / $itemsPerPage);
             color: #666;
             font-size: 14px;
         }
+        .admin-header {
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .admin-header h2 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .admin-header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
         .filters-section {
             background: white;
             padding: 25px;
@@ -747,6 +838,11 @@ $totalPages = ceil($totalItems / $itemsPerPage);
             display: flex;
             gap: 15px;
             justify-content: flex-end;
+        }
+        
+        .btn-sm {
+            padding: 7px 16px !important;
+            font-size: 12px !important;
         }
         
         .btn {
@@ -787,17 +883,57 @@ $totalPages = ceil($totalItems / $itemsPerPage);
         .badge-processing { background: #d1ecf1; color: #0c5460; }
         .badge-approved { background: #d4edda; color: #155724; }
         .badge-rejected { background: #f8d7da; color: #721c24; }
+       
         .btn-action {
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
+            padding: 10px 18px !important;
+            border-radius: 8px;
+            font-size: 14px !important;
+            font-weight: 600;
             text-decoration: none;
-            margin: 0 2px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            min-width: 75px !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            white-space: nowrap;
         }
-        .btn-view { background: #17a2b8; color: white; }
-        .btn-edit { background: #ffc107; color: #333; }
-        .btn-delete { background: #dc3545; color: white; }
 
+        .btn-action:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+        }
+
+        .btn-edit {
+            background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%);
+            color: #333;
+        }
+
+        .btn-edit:hover {
+            background: linear-gradient(135deg, #FFB300 0%, #FFA000 100%);
+            color: #000;
+        }
+
+        .btn-view {
+            background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+            color: white;
+        }
+
+        .btn-view:hover {
+            background: linear-gradient(135deg, #138496 0%, #0f6674 100%);
+        }
+
+        .btn-delete {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+        }
+
+        .btn-delete:hover {
+            background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+        }
         /* MODAL */
         .modal {
             display: none;
@@ -1107,58 +1243,223 @@ $totalPages = ceil($totalItems / $itemsPerPage);
         }
 
         /* Styles spécifiques pour les colonnes du tableau */
+        .projects-table {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.08);
+        }
+        
         .projects-table table {
-            table-layout: fixed;
-            width: 60%;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        th, td {
+            padding: 15px;
+            text-align: center;
+        }
+        
+        td {
+            border-bottom: 1px solid #f0f0f0;
+        }
+        
+        tbody tr:hover {
+            background: #f8f9fa;
         }
 
         .projects-table th:nth-child(1),
         .projects-table td:nth-child(1) {
-            width: 40px !important;
-            min-width: 40px !important;
-            max-width: 40px !important;
+            width: 8%;
         }
 
         .projects-table th:nth-child(2),
         .projects-table td:nth-child(2) {
-            width: 70px !important;
-            min-width: 70px !important;
-            max-width: 70px !important;
+            width: 10%;
         }
 
         .projects-table th:nth-child(3) {
-            width: 35%;
+            width: 30%;
         }
 
         .projects-table th:nth-child(4) {
-            width: 15%;
+            width: 12%;
         }
 
         .projects-table th:nth-child(5),
         .projects-table td:nth-child(5) {
-            width: 40px;
+            width: 13%;
             text-align: center;
         }
 
         .projects-table th:nth-child(6),
         .projects-table td:nth-child(6) {
-            width: 40px;
+            width: 13%;
             text-align: center;
         }
 
         .projects-table th:nth-child(7),
         .projects-table td:nth-child(7) {
-            width: 40px;
+            width: 14%;
             text-align: center;
         }
         
+        /* Styles pour les boutons d'action - identiques à projets.php */
+        .btn-action {
+            padding: 6px 11px !important;
+            border-radius: 5px;
+            font-size: 11px !important;
+            font-weight: 600;
+            text-decoration: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 3px;
+            min-width: 60px !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            white-space: nowrap;
+        }
+
+        .btn-action:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.15);
+        }
+
+        .btn-edit {
+            background: linear-gradient(135deg, #FFC107 0%, #FFB300 100%);
+            color: #333;
+        }
+
+        .btn-edit:hover {
+            background: linear-gradient(135deg, #FFB300 0%, #FFA000 100%);
+            color: #000;
+        }
+
+        .btn-delete {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+        }
+
+        .btn-delete:hover {
+            background: linear-gradient(135deg, #c82333 0%, #bd2130 100%);
+        }
+        
+        /* Styles pour les boutons d'export */
+        .btn-export {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 11px;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-family: Arial, sans-serif;
+        }
+
+        .btn-export:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .btn-export:active {
+            transform: translateY(0);
+        }
+
+        .btn-export svg {
+            transition: transform 0.3s ease;
+        }
+
+        .btn-export:hover svg {
+            transform: scale(1.1);
+        }
+
+        .btn-export-excel {
+            background: linear-gradient(135deg, #217346 0%, #2d9a5a 100%);
+            color: white;
+        }
+
+        .btn-export-excel:hover {
+            background: linear-gradient(135deg, #1a5c37 0%, #257d4b 100%);
+        }
+
+        .btn-export-word {
+            background: linear-gradient(135deg, #2b579a 0%, #3d6fc4 100%);
+            color: white;
+        }
+
+        .btn-export-word:hover {
+            background: linear-gradient(135deg, #1f3f6d 0%, #2d5294 100%);
+        }
+
+        .btn-export-pdf {
+            background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%);
+            color: white;
+        }
+
+        .btn-export-pdf:hover {
+            background: linear-gradient(135deg, #a82424 0%, #d32f2f 100%);
+        }
+
+        .export-loading {
+            position: relative;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+
+        .export-loading::after {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            margin-left: -10px;
+            margin-top: -10px;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @media (max-width: 768px) {
+            .export-buttons-container > div {
+                flex-direction: column;
+                width: 100%;
+            }
+            
+            .btn-export {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+        
     </style>
+
+
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
-            <h2 class="section-title">قائمة الجلسات</h2>
+            <div class="admin-header">
+                <h2>📋 قائمة الجلسات</h2>
+            </div>
             <div class="filters-section">
                 <form method="GET">
                     <div class="filters-grid">
@@ -1183,21 +1484,37 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                         </div>
                     </div>
                     <div class="filter-actions">
-                        <button type="submit" class="btn btn-primary">🔍 بحث</button>
-                        <a href="commissions.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
-                        <?php if (Permissions::canCreateProjet()): ?>
-                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة جلسة
-                            </button>
-                        <?php endif; ?>
+                        <button type="submit" class="btn btn-primary btn-sm">🔍 بحث</button>
+                        <a href="commissions.php" class="btn btn-secondary btn-sm">🔄 إعادة تعيين</a>
                     </div>
                 </form>
             </div>
             <!-- Remplacez la section de la table (ligne ~660-720) par ce code : -->
 
-<div class="projects-table">
+        <div class="projects-table">
+            <!-- Boutons d'exportation + Ajout -->
+            <div style="margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; direction: rtl;">
+                <!-- Bouton إضافة جلسة à droite (RTL = right) -->
+                <?php if (Permissions::canCreateProjet()): ?>
+                <button type="button" class="btn btn-success btn-sm" id="btnOpenModal">➕ إضافة جلسة</button>
+                <?php endif; ?>
+                <!-- Boutons export à gauche (RTL = left) -->
+                <div style="display: inline-flex; gap: 10px; background: white; padding: 10px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); direction: ltr;">
+                    <span style="color: #666; font-size: 11px; align-self: center; margin-left: 5px;">📥 تحميل</span>
+                    <button onclick="exportData('excel')" class="btn-export btn-export-excel" title="تصدير إلى Excel">
+                        <span>Excel</span>
+                    </button>
+                    <button onclick="exportData('word')" class="btn-export btn-export-word" title="تصدير إلى Word">
+                        <span>Word</span>
+                    </button>
+                    <button onclick="exportData('pdf')" class="btn-export btn-export-pdf" title="تصدير إلى PDF">
+                        <span>PDF</span>
+                    </button>
+                </div>
+            </div>
+    
     <?php if (count($commissions) > 0): ?>
-        <div style="overflow-x: auto;">
-            <table style="min-width: 100%; width: max-content;">
+            <table style="width: 100%;">
                 <thead>
                     <tr>
                         <th>عدد الجلسة</th>
@@ -1280,59 +1597,57 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                             </td>
                             
                             <td style="text-align: center;">
-    <?php if (!empty($row['mahdarPath'])): ?>
-        <a href="<?php echo htmlspecialchars($row['mahdarPath']); ?>" 
-           target="_blank" 
-           class="btn-action btn-view" 
-           title="<?php echo htmlspecialchars($row['mahdarLibelle'] ?? 'محضر الجلسة'); ?>"
-           style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
-            📄 عرض 
-        </a>
-    <?php else: ?>
-        <span style="color: #999; font-style: italic;">لا يوجد</span>
-    <?php endif; ?>
-</td>
+                                <?php if (!empty($row['mahdarPath'])): ?>
+                                    <a href="<?php echo htmlspecialchars($row['mahdarPath']); ?>" 
+                                    target="_blank" 
+                                    class="btn-action btn-view" 
+                                    title="<?php echo htmlspecialchars($row['mahdarLibelle'] ?? 'محضر الجلسة'); ?>"
+                                    style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
+                                        📄 عرض 
+                                    </a>
+                                <?php else: ?>
+                                    <span style="color: #999; font-style: italic;">لا يوجد</span>
+                                <?php endif; ?>
+                            </td>
 
-<!-- قرار اللجنة -->
-<td style="text-align: center;">
-    <?php if (!empty($row['qararPath'])): ?>
-        <a href="<?php echo htmlspecialchars($row['qararPath']); ?>" 
-           target="_blank" 
-           class="btn-action btn-view" 
-           title="<?php echo htmlspecialchars($row['qararLibelle'] ?? 'قرار اللجنة'); ?>"
-           style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
-            📋 عرض
-        </a>
-    <?php else: ?>
-        <?php if (Permissions::canEditProjet($_SESSION['user_id'])): ?>
-            <button type="button" 
-                    class="btn-action btn-success" 
-                    onclick="openQararModal(<?php echo $row['idCom']; ?>)"
-                    style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px; border: none; cursor: pointer;">
-                ➕ 
-            </button>
-        <?php else: ?>
-            <span style="color: #999; font-style: italic;">لا يوجد</span>
-        <?php endif; ?>
-    <?php endif; ?>
-</td>
+                            <!-- قرار اللجنة -->
+                            <td style="text-align: center;">
+                                <?php if (!empty($row['qararPath'])): ?>
+                                    <a href="<?php echo htmlspecialchars($row['qararPath']); ?>" 
+                                    target="_blank" 
+                                    class="btn-action btn-view" 
+                                    title="<?php echo htmlspecialchars($row['qararLibelle'] ?? 'قرار اللجنة'); ?>"
+                                    style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px;">
+                                        📋 عرض
+                                    </a>
+                                <?php else: ?>
+                                    <?php if (Permissions::canEditProjet($_SESSION['user_id'])): ?>
+                                        <button type="button" 
+                                                class="btn-action btn-success" 
+                                                onclick="openQararModal(<?php echo $row['idCom']; ?>)"
+                                                style="display: inline-flex; align-items: center; gap: 5px; padding: 8px 15px; border: none; cursor: pointer;">
+                                            ➕ 
+                                        </button>
+                                    <?php else: ?>
+                                        <span style="color: #999; font-style: italic;">لا يوجد</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
+                            </td>
                             
                             <!-- الإجراءات -->
                             <td style="text-align: center;">
-                                <div style="display: flex; flex-direction: column; gap: 5px; align-items: center;">
+                                <div style="display: flex; gap: 5px; justify-content: center; flex-wrap: nowrap;">
                                     <?php if (Permissions::canEditProjet($_SESSION['user_id'])): ?>
-                                        <a href="javascript:void(0)" 
-                                           onclick="openEditCommissionModal(<?php echo $commission['idCom']; ?>)" 
-                                           class="btn-action btn-edit"
-                                           style="width: 100%; max-width: 100px;">
-                                            ✏️ تعديل
-                                        </a>
-                                        <a href="javascript:void(0)" 
-                                           onclick="confirmDeleteCommission(<?php echo $commission['idCom']; ?>)" 
-                                           class="btn-action btn-delete"
-                                           style="width: 100%; max-width: 100px;">
-                                            🗑️ حذف
-                                        </a>
+                                        <button onclick="openEditCommissionModal(<?php echo $row['idCom']; ?>)" 
+                                                class="btn-action btn-edit"
+                                                title="تعديل الجلسة">
+                                            تعديل
+                                        </button>
+                                        <button onclick="confirmDeleteCommission(<?php echo $row['idCom']; ?>)" 
+                                                class="btn-action btn-delete"
+                                                title="حذف الجلسة">
+                                            حذف
+                                        </button>
                                     <?php else: ?>
                                         <span style="color: #999; font-style: italic;">-</span>
                                     <?php endif; ?>
@@ -1341,8 +1656,8 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                         </tr>
                     <?php endforeach; ?>
                 </tbody>
+                
             </table>
-        </div>
     <?php else: ?>
         <div style="text-align: center; padding: 60px 20px;">
             <div style="font-size: 48px; color: #ddd; margin-bottom: 20px;">📋</div>
@@ -1518,7 +1833,7 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                             <input type="file" name="fichierMahdar" id="fichierMahdar" class="form-control" 
                                 accept=".pdf,.doc,.docx,.xls,.xlsx">
                             <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                الحجم الأقصى: 5MB - الأنواع المقبولة: PDF, Word, Excel
+                                الحجم الأقصى: 20MB - الأنواع المقبولة: PDF, Word, Excel
                             </small>
                         </div>
                         
@@ -1564,7 +1879,7 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                         <input type="file" name="fichierQarar" id="fichierQarar" class="form-control" 
                             accept=".pdf,.doc,.docx,.xls,.xlsx" required>
                         <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                            الحجم الأقصى: 5MB - الأنواع المقبولة: PDF, Word, Excel
+                            الحجم الأقصى: 20MB - الأنواع المقبولة: PDF, Word, Excel
                         </small>
                     </div>
                     
@@ -1622,22 +1937,33 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                     <!-- Fichiers actuels -->
                     <div class="form-grid">
                         <div class="form-group">
-                            <label>محضر الجلسة الحالي</label>
-                            <div id="currentMahdar" style="padding: 10px; background: #f8f9fa; border-radius: 6px; margin-bottom: 10px;">
-                                <!-- Sera rempli dynamiquement -->
-                            </div>
                             <label>تحديث محضر الجلسة <span style="color: #999;">(اختياري)</span></label>
                             <input type="file" name="fichierMahdar" id="editFichierMahdar" class="form-control" 
                                 accept=".pdf,.doc,.docx,.xls,.xlsx">
                             <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
-                                الحجم الأقصى: 5MB - اترك فارغاً للاحتفاظ بالملف الحالي
-                            </small>
+                                الحجم الأقصى: 20MB - اترك فارغاً للاحتفاظ بالملف الحالي
+                            </small>                            
                         </div>
                         
                         <div class="form-group">
-                            <label>عنوان ملف المحضر</label>
+                            <label>عنوان ملف المحضر  <span style="color: #999;">(اختياري)</span></label>
                             <input type="text" name="libDocMahdar" id="editLibDocMahdar" class="form-control" 
                                 placeholder="أدخل عنوان المحضر">
+                        </div>
+                        <div class="form-group">
+                            
+                            <label>تحديث قرار اللجنة <span style="color: #999;">(اختياري)</span></label>
+                            <input type="file" name="fichierQarar" id="editFichierQarar" class="form-control" 
+                                accept=".pdf,.doc,.docx,.xls,.xlsx">
+                            <small style="color: #666; font-size: 12px; display: block; margin-top: 5px;">
+                                الحجم الأقصى: 20MB - اترك فارغاً للاحتفاظ بالملف الحالي
+                            </small>
+                        </div>
+
+                        <div class="form-group">
+                            <label>عنوان قرار اللجنة <span style="color: #999;">(اختياري)</span></label>
+                            <input type="text" name="libDocQarar" id="editLibDocQarar" class="form-control" 
+                                placeholder="أدخل عنوان قرار اللجنة">
                         </div>
                     </div>
                     
@@ -1794,8 +2120,8 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                                    'application/vnd.ms-excel',
                                    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
-                if (fileSize > 10) {
-                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
+                if (fileSize > 20) {
+                    alert('حجم الملف يجب أن يكون أقل من 20 ميغابايت');
                     this.value = '';
                     libDocInput.required = false;
                     requiredSpan.innerHTML = '(اختياري)';
@@ -1883,15 +2209,21 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                 method: 'POST',
                 body: formData
             })
-            .then(response => response.json())
-            .then(data => {
-                if (data.success) {
-                    alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
-                    setTimeout(function() {
-                        window.location.reload();
-                    }, 1500);
-                } else {
-                    alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+            .then(response => response.text())
+            .then(text => {
+                try {
+                    var data = JSON.parse(text);
+                    if (data.success) {
+                        alertDiv.innerHTML = '<div class="alert alert-success">✓ ' + data.message + '</div>';
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1500);
+                    } else {
+                        alertDiv.innerHTML = '<div class="alert alert-error">✕ ' + data.message + '</div>';
+                    }
+                } catch(e) {
+                    console.error('Réponse non-JSON:', text);
+                    alertDiv.innerHTML = '<div class="alert alert-error">✕ خطأ في الخادم: ' + text.substring(0, 200) + '</div>';
                 }
             })
             .catch(function(error) {
@@ -1987,8 +2319,8 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                                 'application/vnd.ms-excel',
                                 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
                 
-                if (fileSize > 5) {
-                    alert('حجم الملف يجب أن يكون أقل من 5 ميغابايت');
+                if (fileSize > 20) {
+                    alert('حجم الملف يجب أن يكون أقل من 20 ميغابايت');
                     this.value = '';
                     return false;
                 }
@@ -2036,6 +2368,7 @@ $totalPages = ceil($totalItems / $itemsPerPage);
         var btnCloseEdit = document.getElementById('btnCloseEditModal');
         var btnCancelEdit = document.getElementById('btnCancelEditModal');
         var editProjetIndex = 0;
+        var currentEditAllProjets = []; // projets disponibles pour la commission en cours d'édition
 
         // Liste des projets disponibles
         var availableProjets = `
@@ -2057,8 +2390,8 @@ $totalPages = ceil($totalItems / $itemsPerPage);
             // Afficher un loader
             document.getElementById('editProjetsContainer').innerHTML = '<p style="text-align: center; padding: 20px;">جاري التحميل...</p>';
             
-            // Charger les données de la commission
-            fetch('get_commission.php?idCom=' + idCom)
+            // Charger les données de la commission (cache-busting)
+            fetch('get_commission.php?idCom=' + idCom + '&_=' + Date.now())
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
@@ -2066,21 +2399,19 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                         document.getElementById('editNumCommission').value = data.commission.numCommission;
                         document.getElementById('editDateCommission').value = data.commission.dateCommission;
                         
-                        // Afficher le fichier actuel محضر
-                        var currentMahdarDiv = document.getElementById('currentMahdar');
-                        if (data.commission.mahdarPath) {
-                            currentMahdarDiv.innerHTML = `
-                                <div style="display: flex; align-items: center; gap: 10px;">
-                                    <span>📄 ${data.commission.mahdarLibelle || 'محضر الجلسة'}</span>
-                                    <a href="${data.commission.mahdarPath}" target="_blank" class="btn-action btn-view" style="padding: 5px 10px;">عرض</a>
-                                </div>
-                            `;
-                            document.getElementById('editLibDocMahdar').value = data.commission.mahdarLibelle || '';
-                        } else {
-                            currentMahdarDiv.innerHTML = '<span style="color: #999;">لا يوجد محضر حالياً</span>';
-                        }
+                       
                         
-                        // Charger les projets
+                        // Construire la liste des projets disponibles pour le select :
+                        // On utilise allProjets si disponible (nouveau get_commission.php),
+                        // sinon on se rabat uniquement sur les projets liés à cette commission
+                        var listeDisponible = (data.allProjets && data.allProjets.length > 0)
+                            ? data.allProjets
+                            : (data.projets || []).map(function(p) {
+                                return { idPro: p.idPro, sujet: p.sujet };
+                              });
+                        currentEditAllProjets = listeDisponible;
+                        
+                        // Charger les projets liés à CETTE commission
                         var container = document.getElementById('editProjetsContainer');
                         container.innerHTML = '';
                         editProjetIndex = 0;
@@ -2091,40 +2422,46 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                                 row.className = 'projet-row';
                                 row.setAttribute('data-index', editProjetIndex);
                                 
-                                var projetOptions = availableProjets.replace(
-                                    `value="${projet.idPro}"`,
-                                    `value="${projet.idPro}" selected`
-                                );
+                                // S'assurer que le projet lié est dans la liste (même s'il n'a pas l'état éligible)
+                                var dansList = listeDisponible.some(function(p) {
+                                    return parseInt(p.idPro) === parseInt(projet.idPro);
+                                });
+                                var optionsList = dansList
+                                    ? listeDisponible
+                                    : [{ idPro: projet.idPro, sujet: projet.sujet }].concat(listeDisponible);
                                 
-                                var natureOptions = `
-                                    <option value="">-- اختر النوعية --</option>
-                                    <option value="20" ${projet.naturePc == 20 ? 'selected' : ''}>إدراج وقتي</option>
-                                    <option value="21" ${projet.naturePc == 21 ? 'selected' : ''}>إدراج نهائي</option>
-                                    <option value="22" ${projet.naturePc == 22 ? 'selected' : ''}>إسناد وقتي</option>
-                                    <option value="23" ${projet.naturePc == 23 ? 'selected' : ''}>إسناد نهائي</option>
-                                `;
+                                // Construire les <option> avec le projet de cette commission sélectionné
+                                var projetOptions = '<option value="">-- اختر المشروع --</option>';
+                                optionsList.forEach(function(p) {
+                                    var sel = (parseInt(p.idPro) === parseInt(projet.idPro)) ? ' selected' : '';
+                                    projetOptions += '<option value="' + p.idPro + '"' + sel + '>' + p.sujet + '</option>';
+                                });
                                 
-                                row.innerHTML = `
-                                    <div class="form-group" style="margin: 0;">
-                                        <label>المشروع <span class="required">*</span></label>
-                                        <select name="projets[]" class="form-control" required>
-                                            ${projetOptions}
-                                        </select>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label>نوعية المقترح <span class="required">*</span></label>
-                                        <select name="naturePcs[]" class="form-control" required>
-                                            ${natureOptions}
-                                        </select>
-                                    </div>
-                                    <button type="button" class="btn-remove" onclick="removeEditProjet(${editProjetIndex})" style="visibility: ${index === 0 && data.projets.length === 1 ? 'hidden' : 'visible'};">×</button>
-                                `;
+                                var natureOptions = '<option value="">-- اختر النوعية --</option>'
+                                    + '<option value="20"' + (projet.naturePc == 20 ? ' selected' : '') + '>إدراج وقتي</option>'
+                                    + '<option value="21"' + (projet.naturePc == 21 ? ' selected' : '') + '>إدراج نهائي</option>'
+                                    + '<option value="22"' + (projet.naturePc == 22 ? ' selected' : '') + '>إسناد وقتي</option>'
+                                    + '<option value="23"' + (projet.naturePc == 23 ? ' selected' : '') + '>إسناد نهائي</option>';
+                                
+                                var hideRemove = (index === 0 && data.projets.length === 1) ? 'hidden' : 'visible';
+                                
+                                row.innerHTML = '<div class="form-group" style="margin: 0;">'
+                                    + '<label>المشروع <span class="required">*</span></label>'
+                                    + '<select name="projets[]" class="form-control" required>'
+                                    + projetOptions
+                                    + '</select></div>'
+                                    + '<div class="form-group" style="margin: 0;">'
+                                    + '<label>نوعية المقترح <span class="required">*</span></label>'
+                                    + '<select name="naturePcs[]" class="form-control" required>'
+                                    + natureOptions
+                                    + '</select></div>'
+                                    + '<button type="button" class="btn-remove" onclick="removeEditProjet(' + editProjetIndex + ')" style="visibility: ' + hideRemove + ';">×</button>';
                                 
                                 container.appendChild(row);
                                 editProjetIndex++;
                             });
                         } else {
-                            // Ajouter un projet vide si aucun projet
+                            // Ajouter un projet vide si aucun projet lié
                             addEditProjet();
                         }
                         
@@ -2164,11 +2501,17 @@ $totalPages = ceil($totalItems / $itemsPerPage);
             newRow.className = 'projet-row';
             newRow.setAttribute('data-index', editProjetIndex);
             
+            // Construire les options depuis currentEditAllProjets (chargé dynamiquement par l'API)
+            var projetOptions = '<option value="">-- اختر المشروع --</option>';
+            currentEditAllProjets.forEach(function(p) {
+                projetOptions += `<option value="${p.idPro}">${p.sujet}</option>`;
+            });
+            
             newRow.innerHTML = `
                 <div class="form-group" style="margin: 0;">
                     <label>المشروع <span class="required">*</span></label>
                     <select name="projets[]" class="form-control" required>
-                        ${availableProjets}
+                        ${projetOptions}
                     </select>
                 </div>
                 <div class="form-group" style="margin: 0;">
@@ -2248,6 +2591,54 @@ $totalPages = ceil($totalItems / $itemsPerPage);
                 fermerEditModal();
             }
         });
+        
+        // Fonction d'exportation
+        function exportData(format) {
+            const button = event.target.closest('.btn-export');
+            button.classList.add('export-loading');
+            button.disabled = true;
+            
+            // Créer un formulaire pour soumettre les données
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'export_commissions.php';
+            form.target = '_blank';
+            
+            const formatInput = document.createElement('input');
+            formatInput.type = 'hidden';
+            formatInput.name = 'format';
+            formatInput.value = format;
+            form.appendChild(formatInput);
+            
+            // Ajouter les filtres actuels
+            const searchInput = document.querySelector('input[name="search"]');
+            if (searchInput && searchInput.value) {
+                const search = document.createElement('input');
+                search.type = 'hidden';
+                search.name = 'search';
+                search.value = searchInput.value;
+                form.appendChild(search);
+            }
+            
+            const yearSelect = document.querySelector('select[name="year"]');
+            if (yearSelect && yearSelect.value) {
+                const year = document.createElement('input');
+                year.type = 'hidden';
+                year.name = 'year';
+                year.value = yearSelect.value;
+                form.appendChild(year);
+            }
+            
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
+            
+            // Réactiver le bouton après un court délai
+            setTimeout(() => {
+                button.classList.remove('export-loading');
+                button.disabled = false;
+            }, 2000);
+        }
     </script>
 </body>
 </html>

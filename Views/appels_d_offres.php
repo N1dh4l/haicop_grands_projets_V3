@@ -197,12 +197,15 @@
     $sql = "SELECT 
                 ao.idApp,
                 ao.dateCreation,
+                p.idUser,
                 p.sujet as projetSujet,
                 p.idPro,
                 m.libMinistere,
                 e.libEtablissement,
                 COUNT(l.lidLot) as nombreLots,
-                SUM(l.somme) as montantTotal
+                SUM(l.somme) as montantTotal,
+                (SELECT cheminAcces FROM document WHERE idExterne = ao.idApp AND type = 30 LIMIT 1) as cheminDocument,
+                p.etat as projetEtat
             FROM appeloffre ao
             INNER JOIN projet p ON ao.idPro = p.idPro
             LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
@@ -242,7 +245,7 @@
     $sqlProjets = "SELECT DISTINCT p.idPro, p.sujet 
                 FROM projet p
                 INNER JOIN projetcommission pc ON p.idPro = pc.idPro
-                WHERE pc.naturePc = 23
+                WHERE pc.naturePc = 23 OR pc.naturePc = 22
                 ORDER BY p.sujet";
     $stmtProjets = $db->prepare($sqlProjets);
     $stmtProjets->execute();
@@ -386,13 +389,32 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             
             // 9. Mettre à jour le document si un nouveau fichier a été uploadé
             if ($nouveauFichier) {
-                $sqlUpdateDoc = "UPDATE document 
-                                 SET cheminAcces = :cheminAcces 
-                                 WHERE idExterne = :idApp AND type = 30";
-                $stmtUpdateDoc = $db->prepare($sqlUpdateDoc);
-                $stmtUpdateDoc->bindParam(':cheminAcces', $nouveauFichier);
-                $stmtUpdateDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
-                $stmtUpdateDoc->execute();
+                // Vérifier si un document existe déjà
+                $sqlCheckDoc = "SELECT idDoc FROM document WHERE idExterne = :idApp AND type = 30 LIMIT 1";
+                $stmtCheckDoc = $db->prepare($sqlCheckDoc);
+                $stmtCheckDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+                $stmtCheckDoc->execute();
+                $existingDoc = $stmtCheckDoc->fetch(PDO::FETCH_ASSOC);
+                
+                if ($existingDoc) {
+                    // Mettre à jour le document existant
+                    $sqlUpdateDoc = "UPDATE document SET cheminAcces = :cheminAcces WHERE idExterne = :idApp AND type = 30";
+                    $stmtUpdateDoc = $db->prepare($sqlUpdateDoc);
+                    $stmtUpdateDoc->bindParam(':cheminAcces', $nouveauFichier);
+                    $stmtUpdateDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+                    $stmtUpdateDoc->execute();
+                } else {
+                    // Insérer un nouveau document
+                    $libDoc = 'ملف إسناد الصفقة رقم ' . $idAppel;
+                    $sqlInsertDoc = "INSERT INTO document (idPro, libDoc, cheminAcces, type, idExterne) 
+                                     VALUES (:idPro, :libDoc, :cheminAcces, 30, :idApp)";
+                    $stmtInsertDoc = $db->prepare($sqlInsertDoc);
+                    $stmtInsertDoc->bindParam(':idPro', $idProjet, PDO::PARAM_INT);
+                    $stmtInsertDoc->bindParam(':libDoc', $libDoc);
+                    $stmtInsertDoc->bindParam(':cheminAcces', $nouveauFichier);
+                    $stmtInsertDoc->bindParam(':idApp', $idAppel, PDO::PARAM_INT);
+                    $stmtInsertDoc->execute();
+                }
             }
             
             // 10. Supprimer les anciens lots
@@ -465,6 +487,70 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             'success' => false,
             'message' => 'حدث خطأ: ' . $e->getMessage()
         ], JSON_UNESCAPED_UNICODE);
+    }
+    exit();
+}
+
+// ================================================================
+// ACTION: GET DETAILS APPEL D'OFFRE (AJAX)
+// ================================================================
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['action']) && $_GET['action'] === 'get_details') {
+    ob_clean();
+    header('Content-Type: application/json; charset=utf-8');
+
+    $idApp = isset($_GET['id']) ? intval($_GET['id']) : 0;
+
+    if ($idApp <= 0) {
+        echo json_encode(['success' => false, 'message' => 'معرف غير صالح'], JSON_UNESCAPED_UNICODE);
+        exit();
+    }
+
+    try {
+        $sqlA = "SELECT ao.idApp, ao.dateCreation,
+                        p.sujet,
+                        m.libMinistere,
+                        e.libEtablissement
+                 FROM appeloffre ao
+                 INNER JOIN projet p        ON ao.idPro = p.idPro
+                 LEFT JOIN  ministere m     ON p.idMinistere = m.idMinistere
+                 LEFT JOIN  etablissement e ON p.idEtab = e.idEtablissement
+                 WHERE ao.idApp = :idApp";
+        $stA = $db->prepare($sqlA);
+        $stA->bindParam(':idApp', $idApp, PDO::PARAM_INT);
+        $stA->execute();
+        $appel = $stA->fetch(PDO::FETCH_ASSOC);
+
+        if (!$appel) {
+            echo json_encode(['success' => false, 'message' => 'الصفقة غير موجودة'], JSON_UNESCAPED_UNICODE);
+            exit();
+        }
+
+        $sqlDoc = "SELECT idDoc, libDoc, cheminAcces FROM document
+                   WHERE idExterne = :idApp AND type = 30 LIMIT 1";
+        $stDoc = $db->prepare($sqlDoc);
+        $stDoc->bindParam(':idApp', $idApp, PDO::PARAM_INT);
+        $stDoc->execute();
+        $document = $stDoc->fetch(PDO::FETCH_ASSOC);
+
+        $sqlLots = "SELECT l.sujetLot, l.somme, f.nomFour
+                    FROM lot l
+                    INNER JOIN fournisseur f ON f.idFour = l.idFournisseur
+                    WHERE l.idAppelOffre = :idApp
+                    ORDER BY l.lidLot";
+        $stLots = $db->prepare($sqlLots);
+        $stLots->bindParam(':idApp', $idApp, PDO::PARAM_INT);
+        $stLots->execute();
+        $lots = $stLots->fetchAll(PDO::FETCH_ASSOC);
+
+        echo json_encode([
+            'success'  => true,
+            'appel'    => $appel,
+            'document' => $document ?: null,
+            'lots'     => $lots
+        ], JSON_UNESCAPED_UNICODE);
+
+    } catch (Exception $e) {
+        echo json_encode(['success' => false, 'message' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
     }
     exit();
 }
@@ -634,6 +720,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             gap: 15px;
             justify-content: flex-end;
         }
+        .btn-sm {
+            padding: 7px 16px !important;
+            font-size: 12px !important;
+        }
+
         .btn {
             padding: 12px 30px;
             border: none;
@@ -656,6 +747,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         .btn-success {
             background: #4caf50;
             color: white;
+        }
+        .btn-success:hover {
+            background: #45a049;
+            transform: translateY(-2px);
         }
         .projects-table {
             background: white;
@@ -683,15 +778,31 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             background: #f8f9fa;
         }
         .btn-action {
-            padding: 6px 12px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            padding: 4px 11px;
             border-radius: 6px;
-            font-size: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            font-family: inherit;
+            border: none;
+            cursor: pointer;
             text-decoration: none;
             margin: 0 2px;
+            transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.16);
+            letter-spacing: 0.3px;
         }
-        .btn-view { background: #ffffff; color: black; }
-        .btn-update { background: #df7e38; color: white; }
-        .btn-delete { background: #dc3545; color: white; }
+        .btn-action:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        .btn-action:active { transform: translateY(0); filter: brightness(0.95); }
+        .btn-add-file { background: linear-gradient(135deg, #26c6da 0%, #00838f 100%); color: white; }
+        .btn-edit   { background: linear-gradient(135deg, #ffca28 0%, #f9a825 100%); color: #4a2c00; }
+        .btn-delete { background: linear-gradient(135deg, #ef5350 0%, #b71c1c 100%); color: white; }
 
         /* MODAL */
         .modal {
@@ -784,6 +895,141 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             cursor: pointer;
         }
         .required { color: #dc3545; }
+
+        /* MODAL DÉTAILS */
+        .details-info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+        .details-info-item {
+            padding: 12px 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-right: 4px solid #667eea;
+        }
+        .details-info-label {
+            font-size: 12px;
+            font-weight: 600;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .details-info-value {
+            font-size: 15px;
+            color: #333;
+            font-weight: 500;
+        }
+        .details-lots-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 10px;
+        }
+        .details-lots-table thead {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .details-lots-table th, .details-lots-table td {
+            padding: 11px 14px;
+            text-align: center;
+            border-bottom: 1px solid #eee;
+        }
+        .details-lots-table .total-row {
+            background: #f0f0f5;
+            font-weight: bold;
+        }
+        .details-section-title {
+            font-size: 17px;
+            font-weight: 700;
+            color: #667eea;
+            margin: 20px 0 10px;
+            padding-bottom: 8px;
+            border-bottom: 2px solid #e0e0f0;
+        }
+        .details-loading {
+            text-align: center;
+            padding: 50px;
+            color: #888;
+            font-size: 16px;
+        }
+
+        .admin-header {
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        
+        .admin-header h2 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .admin-header p {
+            font-size: 16px;
+            opacity: 0.9;
+        }
+
+        /* ===== BOUTONS EXPORT ===== */
+        .btn-export {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 6px 11px;
+            border: none;
+            border-radius: 5px;
+            font-weight: 600;
+            font-size: 11px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            font-family: Arial, sans-serif;
+        }
+        .btn-export:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+        .btn-export:active { transform: translateY(0); }
+        .btn-export-excel {
+            background: linear-gradient(135deg, #217346 0%, #2d9a5a 100%);
+            color: white;
+        }
+        .btn-export-excel:hover {
+            background: linear-gradient(135deg, #1a5c37 0%, #257d4b 100%);
+        }
+        .btn-export-word {
+            background: linear-gradient(135deg, #2b579a 0%, #3d6fc4 100%);
+            color: white;
+        }
+        .btn-export-word:hover {
+            background: linear-gradient(135deg, #1f3f6d 0%, #2d5294 100%);
+        }
+        .btn-export-pdf {
+            background: linear-gradient(135deg, #d32f2f 0%, #f44336 100%);
+            color: white;
+        }
+        .btn-export-pdf:hover {
+            background: linear-gradient(135deg, #a82424 0%, #d32f2f 100%);
+        }
+        .export-loading {
+            position: relative;
+            pointer-events: none;
+            opacity: 0.7;
+        }
+        .export-loading::after {
+            content: "";
+            position: absolute;
+            top: 50%; left: 50%;
+            margin-left: -10px; margin-top: -10px;
+            width: 20px; height: 20px;
+            border: 3px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
     </style>
 </head>
 <body>
@@ -791,8 +1037,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
-            <h2 class="section-title">قائمة الصفقات</h2>
-            
+            <div class="admin-header">
+                <h2>📋 قائمة الصفقات</h2>
+            </div>
             <div class="filters-section">
                 <form method="GET">
                     <div class="filters-grid">
@@ -817,22 +1064,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                     </div>
                     
                     <div class="filter-actions">
-                        <button type="submit" class="btn btn-primary">🔍 بحث</button>
-                        <a href="appels_d_offres.php" class="btn btn-secondary">🔄 إعادة تعيين</a>
-                        <?php if (Permissions::canCreateProjet()): ?>
-                            <button type="button" class="btn btn-success" id="btnOpenModal">➕ إضافة صفقة</button>
-                        <?php endif; ?>
+                            <button type="submit" class="btn btn-primary btn-sm">🔍 بحث</button>
+                            <a href="appels_d_offres.php" class="btn btn-secondary btn-sm">🔄 إعادة تعيين</a>
+                            
                     </div>
                 </form>
             </div>
             
             <div class="projects-table">
-                <?php if (count($appelsOffres) > 0): ?>
+                <div style="margin-bottom:18px; display:flex; justify-content:space-between; align-items:center; direction:rtl;">
+                    <?php if (Permissions::canCreateProjet()): ?>
+                        <button type="button" id="btnOpenModal" style="
+                            display: inline-flex;
+                            align-items: center;
+                            gap: 9px;
+                            padding: 10px 17px;
+                            background: linear-gradient(135deg, #56ab2f 0%, #2d6a0f 100%);
+                            color: #fff;
+                            border: none;
+                            border-radius: 12px;
+                            font-size: 15px;
+                            font-weight: 700;
+                            font-family: inherit;
+                            cursor: pointer;
+                            
+                            transition: transform 0.15s ease, box-shadow 0.15s ease;
+                            letter-spacing: 0.4px;
+                        "
+                        onmouseover="this.style.transform='translateY(-3px)';this.style.boxShadow='0 8px 24px rgba(45,106,15,0.50), inset 0 1px 0 rgba(255,255,255,0.18)'"
+                        onmouseout="this.style.transform='';this.style.boxShadow='0 5px 18px rgba(45,106,15,0.38), inset 0 1px 0 rgba(255,255,255,0.18)'"
+                        onmousedown="this.style.transform='translateY(0)'"
+                        >➕ إضافة صفقة</button>
+                    <?php else: ?>
+                    <div></div>
+                    <?php endif; ?>
+                    <div style="display:inline-flex; align-items:center; gap:7px; background:white; padding:9px 13px; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,0.09); direction:ltr;">
+                        <span style="color:#888; font-size:11px; margin-left:4px; white-space:nowrap;">📥 تحميل</span>
+                        <button onclick="exportData('excel')" class="btn-export btn-export-excel" title="تصدير إلى Excel"><span>Excel</span></button>
+                        <button onclick="exportData('word')"  class="btn-export btn-export-word"  title="تصدير إلى Word"><span>Word</span></button>
+                        <button onclick="exportData('pdf')"   class="btn-export btn-export-pdf"   title="تصدير إلى PDF"><span>PDF</span></button>
+                    </div>
+                </div>
+                
+                <?php 
+                    $grandTotal = array_sum(array_column($appelsOffres, 'montantTotal'));
+                    if (count($appelsOffres) > 0): ?>
                     <table>
                         <thead>
                             <tr>
-                                <th style="width: 40%;">المشروع</th>
+                                <th style="width: 35%;">المشروع</th>
                                 <th>الوزارة</th>
+                                <th>حالة المشروع</th>
                                 <th>عدد الأقساط</th>
                                 <th>المبلغ الإجمالي</th>
                                 <th>الإجراءات</th>
@@ -841,34 +1123,57 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                         <tbody>
                             <?php foreach ($appelsOffres as $ao):?>
                             <tr>
-                                <td><?php echo htmlspecialchars($ao['projetSujet']);?></td>
-                                <td><?php echo htmlspecialchars($ao['libMinistere']); ?></td>
-                                <td><?php echo $ao['nombreLots']; ?></td>
-                                <td><?php echo number_format($ao['montantTotal'], 2); ?> دينار</td>
                                 <td>
-                                    <button type="button" 
-                                            class="btn-action btn-success" ><a href="details_appel_offre.php?id=<?php echo $ao['idApp']; ?>" 
-                                    class="btn-action btn-success"> عرض</a>
-                                    </button>
-
-                                    
+                                    <span onclick="openDetailsModal(<?php echo $ao['idApp']; ?>)" 
+                                          style="cursor:pointer; color:#667eea; font-weight:600; text-decoration:underline;"
+                                          title="انقر لعرض التفاصيل">
+                                        <?php echo htmlspecialchars($ao['projetSujet']); ?>
+                                    </span>
+                                </td>
+                                <td><?php echo htmlspecialchars($ao['libMinistere']); ?></td>
+                                <td>
+                                    <?php if ($ao['projetEtat'] == 3): ?>
+                                        <span style="background:#fff3cd; color:#856404; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600;">إسناد وقتي</span>
+                                    <?php elseif ($ao['projetEtat'] == 4): ?>
+                                        <span style="background:#d4edda; color:#155724; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600;">إسناد نهائي</span>
+                                    <?php else: ?>
+                                        <span style="background:#e2e3e5; color:#383d41; padding:4px 10px; border-radius:20px; font-size:12px; font-weight:600;"><?php echo $ao['projetEtat']; ?></span>
+                                    <?php endif; ?>
+                                </td>
+                                <td><?php echo $ao['nombreLots']; ?></td>
+                                <td><?php echo number_format($ao['montantTotal'], 2); ?> مليون دينار</td>
+                                <td>
+                                    <?php if (!empty($ao['cheminDocument'])): ?>
+                                        <a href="<?php echo htmlspecialchars($ao['cheminDocument']); ?>"
+                                           target="_blank" class="btn-action btn-add-file">ملف</a>
+                                    <?php endif; ?>
                                     <?php if (Permissions::canEditProjet($ao['idUser'] ?? 0)): ?>
-                                        <button type="button" 
-                                                class="btn-action btn-update" 
+                                        <button type="button"
+                                                class="btn-action btn-edit"
                                                 onclick="openEditAppelOffreModal(<?php echo $ao['idApp']; ?>)">
-                                            ✏️ تعديل
+                                            تعديل
                                         </button>
-                                        
-                                        <button type="button" 
-                                                class="btn-action btn-delete" 
+                                        <button type="button"
+                                                class="btn-action btn-delete"
                                                 onclick="openDeleteAppelOffreModal(<?php echo $ao['idApp']; ?>, '<?php echo htmlspecialchars($ao['projetSujet'], ENT_QUOTES); ?>')">
-                                            🗑️ حذف
+                                            حذف
                                         </button>
                                     <?php endif; ?>
                                 </td>
                             </tr>
                             <?php   endforeach; ?>
                         </tbody>
+                        <tfoot>
+                            <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                                <td colspan="3" style="padding: 14px 15px; font-weight: 700; font-size: 15px; text-align: center;">
+                                    المجموع الإجمالي
+                                </td>
+                                <td style="padding: 14px 15px; font-weight: 700; font-size: 18px; text-align: center;">
+                                    <?php echo number_format($grandTotal, 2).  'مليون دينار'; ?>  
+                                </td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
                     </table>
                 <?php else: ?>
                     <p style="text-align: center; padding: 40px; color: #666;">لا توجد صفقات</p>
@@ -928,6 +1233,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
                                 </tr>
                             </thead>
                             <tbody id="lotsTableBody"></tbody>
+                            <tfoot>
+                                <tr style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white;">
+                                    <td colspan="3" style="padding: 14px 15px; font-weight: 700; font-size: 15px; text-align: right;">
+                                        المجموع الإجمالي
+                                    </td>
+                                    <td style="padding: 14px 15px; font-weight: 700; font-size: 15px; direction: ltr; text-align: left;">
+                                        <span id="modalGrandTotal">0.00</span> دينار
+                                    </td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
                         </table>
                     </div>
                     
@@ -967,7 +1283,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
     </div>
 
 
-    <?php include 'includes/footer.php'; ?>
+    <!-- MODAL DÉTAILS APPEL D'OFFRE -->
+    <div id="detailsAppelOffreModal" class="modal">
+        <div class="modal-content" style="max-width: 850px;">
+            <div class="modal-header">
+                <h2>📋 تفاصيل الصفقة</h2>
+                <span class="close" onclick="closeDetailsModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="detailsModalBody">
+                <div class="details-loading">جاري التحميل...</div>
+            </div>
+        </div>
+    </div>
+
+        <?php include 'includes/footer.php'; ?>
 
     <script>
         let lotCounter = 0;
@@ -995,6 +1324,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             return options;
         }
 
+        function updateModalTotal() {
+            let total = 0;
+            document.querySelectorAll('#lotsTableBody input[type="number"]').forEach(input => {
+                total += parseFloat(input.value) || 0;
+            });
+            const el = document.getElementById('modalGrandTotal');
+            if (el) el.textContent = total.toLocaleString('fr-TN', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+
         function addLotRow() {
             lotCounter++;
             const tbody = document.getElementById('lotsTableBody');
@@ -1003,16 +1341,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             row.innerHTML = `
                 <td><input type="text" name="lots[${lotCounter}][sujetLot]" class="form-control" placeholder="موضوع الصفقة" required></td>
                 <td><select name="lots[${lotCounter}][idFournisseur]" class="form-control" required>${createFournisseurOptions()}</select></td>
-                <td><input type="number" name="lots[${lotCounter}][somme]" class="form-control" step="0.01" min="0" placeholder="0.00" required></td>
+                <td><input type="number" name="lots[${lotCounter}][somme]" class="form-control" step="0.01" min="0" placeholder="0.00" required oninput="updateModalTotal()"></td>
                 <td><button type="button" class="btn-remove-lot" onclick="removeLotRow(${lotCounter})">🗑️</button></td>
             `;
             tbody.appendChild(row);
+            updateModalTotal();
         }
 
         function removeLotRow(id) {
             const row = document.getElementById(`lot-row-${id}`);
             if (row && document.querySelectorAll('#lotsTableBody tr').length > 1) {
                 row.remove();
+                updateModalTotal();
             } else {
                 alert('يجب أن تحتفظ بصفقة واحدة على الأقل');
             }
@@ -1115,18 +1455,30 @@ function openEditAppelOffreModal(idAppel) {
     
     // Charger les données de l'appel d'offre via AJAX
     fetch(`get_appel_offre_data.php?id=${idAppel}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success) {
-                // Remplir le formulaire avec les données
-                renderEditForm(data.appelOffre, data.lots, data.projets, data.fournisseurs);
-            } else {
-                showEditError(data.message || 'حدث خطأ في تحميل البيانات');
+        .then(response => response.text())
+        .then(text => {
+            try {
+                // Nettoyer le texte (BOM, espaces, caractères parasites)
+                const clean = text.trim().replace(/^\uFEFF/, '').replace(/^[^{[]+/, '');
+                const data = JSON.parse(clean);
+                if (data.success) {
+                    renderEditForm(
+                        data.appelOffre,
+                        data.lots        || [],
+                        data.projets     || [],
+                        data.fournisseurs|| []
+                    );
+                } else {
+                    showEditError(data.message || 'حدث خطأ في تحميل البيانات');
+                }
+            } catch(e) {
+                console.error('Réponse non-JSON:', text);
+                showEditError('خطأ في الخادم: ' + text.substring(0, 300));
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            showEditError('حدث خطأ في الاتصال بالخادم');
+            showEditError('حدث خطأ في الاتصال بالخادم: ' + error.message);
         });
 }
 
@@ -1143,7 +1495,7 @@ function renderEditForm(appelOffre, lots, projets, fournisseurs) {
         <div id="editModalAlert"></div>
         
         <form id="editAppelOffreForm" enctype="multipart/form-data">
-            <input type="hidden" name="csrf_token" value="${document.querySelector('[name="csrf_token"]').value}">
+            <input type="hidden" name="csrf_token" value="${document.querySelector('input[name="csrf_token"]') ? document.querySelector('input[name="csrf_token"]').value : '<?php echo $csrf_token; ?>'}">
             <input type="hidden" name="action" value="update_appel_offre">
             <input type="hidden" name="idApp" id="editIdApp" value="${appelOffre.idApp}">
             
@@ -1543,7 +1895,7 @@ function openDeleteAppelOffreModal(idAppel, projetNom) {
             <div id="deleteModalAlert"></div>
             
             <form id="deleteAppelOffreForm" onsubmit="handleDeleteFormSubmit(event, ${idAppel})">
-                <input type="hidden" name="csrf_token" value="${document.querySelector('[name="csrf_token"]').value}">
+                <input type="hidden" name="csrf_token" value="${document.querySelector('input[name="csrf_token"]') ? document.querySelector('input[name="csrf_token"]').value : '<?php echo $csrf_token; ?>'}">
                 <input type="hidden" name="action" value="delete_appel_offre">
                 <input type="hidden" name="idApp" value="${idAppel}">
                 
@@ -1671,8 +2023,163 @@ window.addEventListener('keydown', function(event) {
     if (event.key === 'Escape') {
         closeEditAppelOffreModal();
         closeDeleteAppelOffreModal();
+        closeDetailsModal();
     }
 });
+
+// ================================================================
+// MODAL DÉTAILS APPEL D'OFFRE
+// ================================================================
+function openDetailsModal(idApp) {
+    const modal = document.getElementById('detailsAppelOffreModal');
+    const body  = document.getElementById('detailsModalBody');
+    body.innerHTML = '<div class="details-loading">⏳ جاري التحميل...</div>';
+    modal.classList.add('show');
+    modal.style.display = 'block';
+
+    fetch('appels_d_offres.php?action=get_details&id=' + idApp + '&_=' + Date.now())
+        .then(r => {
+            if (!r.ok) throw new Error('HTTP ' + r.status);
+            return r.text();
+        })
+        .then(text => {
+            try {
+                return JSON.parse(text);
+            } catch(e) {
+                throw new Error('الاستجابة ليست JSON صحيحة: ' + text.substring(0, 200));
+            }
+        })
+        .then(data => {
+            if (!data.success) {
+                body.innerHTML = '<div class="details-loading" style="color:#dc3545;">❌ ' + data.message + '</div>';
+                return;
+            }
+            const ao = data.appel;
+            const lots = data.lots;
+            const doc  = data.document;
+
+            let docHtml = doc
+                ? `<a href="${escapeHtml(doc.cheminAcces)}" target="_blank" style="color:#667eea;font-weight:600;">📄 تحميل الملف</a>`
+                : '<span style="color:#aaa;">لا يوجد ملف</span>';
+
+            let lotsRows = lots.map((l, i) => `
+                <tr>
+                    <td>${i + 1}</td>
+                    <td style="text-align:right">${escapeHtml(l.sujetLot)}</td>
+                    <td>${escapeHtml(l.nomFour)}</td>
+                    <td style="direction:ltr;text-align:left;">${Number(l.somme).toLocaleString('fr-TN', {minimumFractionDigits:2})} دينار</td>
+                </tr>
+            `).join('');
+
+            const total = lots.reduce((s, l) => s + parseFloat(l.somme || 0), 0);
+
+            body.innerHTML = `
+                <div class="details-info-grid">
+                    <div class="details-info-item" style="grid-column:1/-1;">
+                        <div class="details-info-label">المشروع</div>
+                        <div class="details-info-value">${escapeHtml(ao.sujet)}</div>
+                    </div>
+                    <div class="details-info-item">
+                        <div class="details-info-label">الوزارة</div>
+                        <div class="details-info-value">${escapeHtml(ao.libMinistere || '-')}</div>
+                    </div>
+                    <div class="details-info-item">
+                        <div class="details-info-label">المؤسسة</div>
+                        <div class="details-info-value">${escapeHtml(ao.libEtablissement || '-')}</div>
+                    </div>
+                    <div class="details-info-item">
+                        <div class="details-info-label">تاريخ الإنشاء</div>
+                        <div class="details-info-value">${escapeHtml(ao.dateCreation)}</div>
+                    </div>
+                    <div class="details-info-item">
+                        <div class="details-info-label">عدد الأقساط</div>
+                        <div class="details-info-value">${lots.length}</div>
+                    </div>
+                    <div class="details-info-item" style="grid-column:1/-1;">
+                        <div class="details-info-label">ملف الإسناد</div>
+                        <div class="details-info-value">${docHtml}</div>
+                    </div>
+                </div>
+
+                <div class="details-section-title">📦 قائمة الصفقات</div>
+                <table class="details-lots-table">
+                    <thead>
+                        <tr>
+                            <th>#</th>
+                            <th>موضوع الصفقة</th>
+                            <th>صاحب الصفقة</th>
+                            <th>المبلغ (دينار)</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${lotsRows}
+                        <tr class="total-row">
+                            <td colspan="3">المجموع الإجمالي</td>
+                            <td style="direction:ltr;text-align:left;">${total.toLocaleString('fr-TN', {minimumFractionDigits:2})} دينار</td>
+                        </tr>
+                    </tbody>
+                </table>
+            `;
+        })
+        .catch(err => {
+            body.innerHTML = '<div class="details-loading" style="color:#dc3545; font-size:13px; text-align:right; padding:20px;">❌ ' + err.message + '</div>';
+        });
+}
+
+function closeDetailsModal() {
+    const modal = document.getElementById('detailsAppelOffreModal');
+    modal.classList.remove('show');
+    modal.style.display = 'none';
+}
+
+// Fermer en cliquant en dehors
+window.addEventListener('click', function(event) {
+    if (event.target === document.getElementById('detailsAppelOffreModal')) {
+        closeDetailsModal();
+    }
+});
+
+        // Fonction d'exportation
+        function exportData(format) {
+            const button = event.target.closest('.btn-export');
+            button.classList.add('export-loading');
+            button.disabled = true;
+
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.action = 'export_appels_offres.php';
+            form.target = '_blank';
+
+            const formatInput = document.createElement('input');
+            formatInput.type = 'hidden';
+            formatInput.name = 'format';
+            formatInput.value = format;
+            form.appendChild(formatInput);
+
+            // Transmettre les filtres actifs
+            const searchInput = document.querySelector('input[name="search"]');
+            if (searchInput && searchInput.value) {
+                const s = document.createElement('input');
+                s.type = 'hidden'; s.name = 'search'; s.value = searchInput.value;
+                form.appendChild(s);
+            }
+
+            const yearSelect = document.querySelector('select[name="year"]');
+            if (yearSelect && yearSelect.value) {
+                const y = document.createElement('input');
+                y.type = 'hidden'; y.name = 'year'; y.value = yearSelect.value;
+                form.appendChild(y);
+            }
+
+            document.body.appendChild(form);
+            form.submit();
+            document.body.removeChild(form);
+
+            setTimeout(() => {
+                button.classList.remove('export-loading');
+                button.disabled = false;
+            }, 2000);
+        }
     </script>
 </body>
 </html>

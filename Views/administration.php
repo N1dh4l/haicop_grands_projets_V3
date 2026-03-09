@@ -100,7 +100,7 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
     <link rel="stylesheet" href="../assets/css/style.css">
     <style>
         .admin-header {
-            background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+            background: linear-gradient(135deg, #4a90e2 0%, #357abd 100%);
             color: white;
             padding: 40px;
             border-radius: 15px;
@@ -403,7 +403,6 @@ $page_title = "لوحة الإدارة - سجل الأنشطة";
 </head>
 <body>
     <?php include 'includes/header.php'; ?>
-
     <section class="content-section" style="padding: 40px 0;">
         <div class="container">
             <div class="admin-header">

@@ -12,16 +12,18 @@
                     <li><a href="projets.php">المقترحات</a></li>
                     <li><a href="commissions.php">الجلسات</a></li>
                     <li><a href="appels_d_offres.php">الصفقات</a></li>
+                    <li><a href="suivi.php">المتابعة</a></li>
+                    <?php if (isset($_SESSION['user_type']) && $_SESSION['user_type'] == 1): ?>
                     <li class="has-submenu">
                         <a href="javascript:void(0)" class="submenu-toggle">الإدارة ▼</a>
                         <ul class="submenu-content">
                             <li><a href="administration.php">الأنشطة</a></li>
-                            <li><a href="gestion_users.php">المستخدمين</a></li>
-                            <li><a href="gestion_users.php">الوزارات </a></li>
-                            <li><a href="gestion_users.php">المؤسسات</a></li>
-                            <li><a href="parametres.php">الإعدادات</a></li>
+                            <li><a href="users.php">المستخدمين</a></li>
+                            <li><a href="divers.php">متفرقات</a></li>
                         </ul>
                     </li>
+                    <?php endif; ?>
+                    <li><a href="parametres.php">الإعدادات</a></li>
                 </ul>
             </nav>
             <div class="user-menu">
@@ -38,7 +40,7 @@
     /* ========================================== */
 
     .main-header {
-        background: linear-gradient(135deg, #FF6B35 0%, #F7931E 100%);
+        background: #335F8A;
         box-shadow: 0 4px 20px rgba(255, 107, 53, 0.3);
         position: sticky;
         top: 0;

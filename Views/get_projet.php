@@ -1,73 +1,76 @@
 <?php
+/**
+ * get_projet.php
+ * Endpoint AJAX — retourne les données d'un projet par son ID (pour le modal de modification)
+ *
+ * Paramètre GET :
+ *   id = identifiant du projet (idPro)
+ */
+
 require_once '../Config/Database.php';
 require_once '../Config/Security.php';
-require_once '../Config/Permissions.php';
 
 Security::startSecureSession();
 Security::requireLogin();
 
-header('Content-Type: application/json; charset=utf-8');
-
-if (!isset($_GET['id'])) {
-    echo json_encode(['success' => false, 'message' => 'معرف المشروع مفقود'], JSON_UNESCAPED_UNICODE);
-    exit();
-}
-
-$projetId = intval($_GET['id']);
+header('Content-Type: application/json; charset=UTF-8');
 
 try {
+    if (!isset($_GET['id']) || !intval($_GET['id'])) {
+        echo json_encode(['success' => false, 'message' => 'معرف المشروع مفقود'], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    $projetId = intval($_GET['id']);
+
     $database = new Database();
     $db = $database->getConnection();
-    
-    // Récupérer le projet
-    $sql = "SELECT * FROM projet WHERE idPro = :projetId";
+
+    // Récupérer les données du projet
+    $sql = "SELECT p.*
+            FROM projet p
+            WHERE p.idPro = :projetId";
+
     $stmt = $db->prepare($sql);
     $stmt->bindParam(':projetId', $projetId, PDO::PARAM_INT);
     $stmt->execute();
-    
     $projet = $stmt->fetch(PDO::FETCH_ASSOC);
-    
+
     if (!$projet) {
         echo json_encode(['success' => false, 'message' => 'المشروع غير موجود'], JSON_UNESCAPED_UNICODE);
-        exit();
+        exit;
     }
-    
-    // Vérifier les permissions
-    if (!Permissions::canEditProjet($projet['idUser'])) {
-        echo json_encode(['success' => false, 'message' => 'ليس لديك صلاحية لتعديل هذا المقترح'], JSON_UNESCAPED_UNICODE);
-        exit();
-    }
-    
-    // Récupérer les documents
-    $sqlDoc = "SELECT * FROM document WHERE idPro = :projetId AND type = 1";
-    $stmtDoc = $db->prepare($sqlDoc);
-    $stmtDoc->bindParam(':projetId', $projetId, PDO::PARAM_INT);
-    $stmtDoc->execute();
-    $docMuqtarah = $stmtDoc->fetch(PDO::FETCH_ASSOC);
-    
-    $sqlTaqrir = "SELECT * FROM document WHERE idPro = :projetId AND type = 11";
+
+    // Récupérer le document المقترح (type = 1)
+    $sqlMuqtarah = "SELECT idDoc, libDoc, cheminAcces
+                    FROM document
+                    WHERE idPro = :projetId AND type = 1
+                    LIMIT 1";
+    $stmtMuqtarah = $db->prepare($sqlMuqtarah);
+    $stmtMuqtarah->bindParam(':projetId', $projetId, PDO::PARAM_INT);
+    $stmtMuqtarah->execute();
+    $docMuqtarah = $stmtMuqtarah->fetch(PDO::FETCH_ASSOC);
+
+    // Récupérer le document التقرير الرقابي (type = 11)
+    $sqlTaqrir = "SELECT idDoc, libDoc, cheminAcces
+                  FROM document
+                  WHERE idPro = :projetId AND type = 11
+                  LIMIT 1";
     $stmtTaqrir = $db->prepare($sqlTaqrir);
     $stmtTaqrir->bindParam(':projetId', $projetId, PDO::PARAM_INT);
     $stmtTaqrir->execute();
     $docTaqrir = $stmtTaqrir->fetch(PDO::FETCH_ASSOC);
 
-    // Dans get_projet.php, la requête SQL doit inclure id_Gov
-    $sql = "SELECT p.*, m.libMinistere, e.libEtablissement, g.libGov
-    FROM projet p
-    LEFT JOIN ministere m ON p.idMinistere = m.idMinistere
-    LEFT JOIN etablissement e ON p.idEtab = e.idEtablissement
-    LEFT JOIN gouvernorat g ON p.id_Gov = g.idGov
-    WHERE p.idPro = :id";
-    
     echo json_encode([
-        'success' => true,
-        'projet' => $projet,
-        'docMuqtarah' => $docMuqtarah,
-        'docTaqrir' => $docTaqrir
+        'success'     => true,
+        'projet'      => $projet,
+        'docMuqtarah' => $docMuqtarah ?: null,
+        'docTaqrir'   => $docTaqrir   ?: null,
     ], JSON_UNESCAPED_UNICODE);
-    
-} catch (Exception $e) {
-    echo json_encode(['success' => false, 'message' => 'حدث خطأ: ' . $e->getMessage()], JSON_UNESCAPED_UNICODE);
-}
 
-?>
+} catch (Exception $e) {
+    echo json_encode([
+        'success' => false,
+        'message' => 'حدث خطأ: ' . $e->getMessage()
+    ], JSON_UNESCAPED_UNICODE);
+}

@@ -32,7 +32,7 @@ try {
         throw new Exception('الجلسة غير موجودة');
     }
     
-    // Récupérer les projets associés
+    // Récupérer les projets associés à CETTE commission
     $sqlProjets = "SELECT pc.idPro, pc.naturePc, p.sujet
                    FROM projetcommission pc
                    JOIN projet p ON pc.idPro = p.idPro
@@ -43,22 +43,49 @@ try {
     $stmtProjets->execute();
     $projets = $stmtProjets->fetchAll(PDO::FETCH_ASSOC);
     
-    // Récupérer le محضر
+    // Récupérer tous les projets disponibles pour le select :
+    // états éligibles (2, 3) + projets déjà liés à cette commission
+    $sqlAllProjets = "SELECT DISTINCT p.idPro, p.sujet 
+                      FROM projet p
+                      WHERE p.etat IN (2, 3)
+                         OR p.idPro IN (
+                             SELECT pc2.idPro FROM projetcommission pc2 WHERE pc2.idCom = :idCom2
+                         )
+                      ORDER BY p.idPro DESC";
+    $stmtAllProjets = $db->prepare($sqlAllProjets);
+    $stmtAllProjets->bindParam(':idCom2', $idCom);
+    $stmtAllProjets->execute();
+    $allProjets = $stmtAllProjets->fetchAll(PDO::FETCH_ASSOC);
+    
+    // Récupérer محضر الجلسة (type = 25)
     $sqlMahdar = "SELECT idDoc, libDoc, cheminAcces FROM document 
-                  WHERE type = 1 AND idExterne = :idCom LIMIT 1";
+                  WHERE type = 25 AND idExterne = :idCom LIMIT 1";
     $stmtMahdar = $db->prepare($sqlMahdar);
     $stmtMahdar->bindParam(':idCom', $idCom);
     $stmtMahdar->execute();
     $mahdar = $stmtMahdar->fetch(PDO::FETCH_ASSOC);
     
-    $commission['mahdarPath'] = $mahdar ? $mahdar['cheminAcces'] : null;
-    $commission['mahdarLibelle'] = $mahdar ? $mahdar['libDoc'] : null;
-    $commission['mahdarId'] = $mahdar ? $mahdar['idDoc'] : null;
+    $commission['mahdarPath']    = $mahdar ? $mahdar['cheminAcces'] : null;
+    $commission['mahdarLibelle'] = $mahdar ? $mahdar['libDoc']      : null;
+    $commission['mahdarId']      = $mahdar ? $mahdar['idDoc']       : null;
+    
+    // Récupérer قرار اللجنة (type = 26)
+    $sqlQarar = "SELECT idDoc, libDoc, cheminAcces FROM document 
+                 WHERE type = 26 AND idExterne = :idCom LIMIT 1";
+    $stmtQarar = $db->prepare($sqlQarar);
+    $stmtQarar->bindParam(':idCom', $idCom);
+    $stmtQarar->execute();
+    $qarar = $stmtQarar->fetch(PDO::FETCH_ASSOC);
+    
+    $commission['qararPath']    = $qarar ? $qarar['cheminAcces'] : null;
+    $commission['qararLibelle'] = $qarar ? $qarar['libDoc']      : null;
+    $commission['qararId']      = $qarar ? $qarar['idDoc']       : null;
     
     echo json_encode([
-        'success' => true,
+        'success'    => true,
         'commission' => $commission,
-        'projets' => $projets
+        'projets'    => $projets,
+        'allProjets' => $allProjets
     ]);
     
 } catch (Exception $e) {

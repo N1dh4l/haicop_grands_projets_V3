@@ -13,45 +13,47 @@ class Dashboard {
     }
 
     public function getStats() {
-        $stats = array();
+    $stats = array();
 
-        $query = "SELECT COUNT(*) as total FROM " . $this->table_projet;
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['total_projets'] = $row['total'];
+    // العدد الجملي للمقترحات
+    $query = "SELECT COUNT(*) as total FROM " . $this->table_projet;
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stats['total_projets'] = $row['total'];
 
-        $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 1";
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['projets_attente'] = $row['total'];
+    // الإحالة على اللجنة 
+    $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 2 ";
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stats['projets_encours'] = $row['total'];
 
-        $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 2";
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['projets_encours'] = $row['total'];
+    // commissions - reste inchangé
+    $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 3 ";
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stats['commissions'] = $row['total'];
 
-        $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 3";
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['appels_offre'] = $row['total'];
+    // الموافقة (naturePc = 23)
+    $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 4 ";
+    $stmt = $this->conn->prepare($query);
+    $stmt->execute();
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stats['appels_offre'] = $row['total'];
+    
+    // بصدد الدرس = total_projets - الإحالة على اللجنة - الموافقة
+    $stats['projets_attente'] = $stats['total_projets'] - $stats['projets_encours'] - $stats['appels_offre']- $stats['commissions'];
 
-        $query = "SELECT COUNT(*) as total FROM " . $this->table_projet . " WHERE etat = 4";
-        $stmt = $this->conn->prepare($query);
-        $stmt->execute();
-        $row = $stmt->fetch(PDO::FETCH_ASSOC);
-        $stats['commissions'] = $row['total'];
+    
 
-        return $stats;
-    }
+    return $stats;
+}
+
 
     public function getProjetsByGouvernorat() {
-        $query = "SELECT 
-                    g.libGov as nomGouvernorat,
-                    COUNT(p.idPro) as nombre_projets
+        $query = "SELECT g.libGov as nomGouvernorat, COUNT(p.idPro) as nombre_projets
                   FROM " . $this->table_gouvernorat . " g
                   LEFT JOIN " . $this->table_projet . " p ON g.idGov = p.id_Gov
                   GROUP BY g.idGov, g.libGov
@@ -73,7 +75,7 @@ class Dashboard {
 
     public function getProjetsBySecteur() {
         $query = "SELECT 
-                    CONCAT('القطاع ', s.numSecteur) as libSecteur,
+                    CONCAT('الإقليم ', s.numSecteur) as libSecteur,
                     COUNT(DISTINCT p.idPro) as nombre_projets
                   FROM " . $this->table_secteur . " s
                   LEFT JOIN " . $this->table_gouvernorat . " g ON s.idSecteur = g.idSecteur
